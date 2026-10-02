@@ -216,6 +216,12 @@ Integrator bertanggung jawab atas:
 - Menjalankan seluruh test setelah setiap merge.
 - Memastikan environment lokal dan Railway memakai konfigurasi yang sama.
 - Menjaga maksimal tiga dokumen Markdown utama ini.
+- Menghubungkan repository GitHub ke Railway dan mengelola production variables.
+- Menjalankan migration production serta smoke test setelah deployment.
+
+Anggota tim tidak memasukkan atau mengubah credential production. Jika sebuah
+fitur memerlukan variable baru, anggota hanya menambah nama dan dokumentasinya
+ke `.env.example` melalui permintaan kepada integrator.
 
 ## 8. Urutan integrasi
 
@@ -318,3 +324,53 @@ fondasi.
 Setelah AI membaca dokumen, berikan task kecil dan terukur. Jangan meminta AI
 “membangun seluruh aplikasi” dari branch anggota karena itu akan melanggar
 ownership dan menghasilkan konflik besar.
+
+## 13. Handoff deployment kepada integrator
+
+Setiap anggota memberikan informasi berikut sebelum release:
+
+### Anggota 1
+
+- Daftar provider dan actor/API yang benar-benar digunakan.
+- Nama variable yang dibutuhkan tanpa nilainya.
+- Timeout, limit, dan estimasi penggunaan per refresh.
+- Bukti parser fixture dan satu live smoke test terbatas.
+
+### Anggota 2
+
+- Daftar migration dalam urutan eksekusi.
+- Cara verifikasi schema dan rollback non-destruktif.
+- Connection/pool configuration yang diperlukan.
+- Bukti persistence setelah restart.
+
+### Anggota 3
+
+- Mode analyzer production dan fallback.
+- Nama variable Gemini tanpa nilainya.
+- Batas batch/rate yang aman.
+- Bukti fallback saat Gemini tidak tersedia.
+
+### Anggota 4
+
+- Daftar endpoint yang digunakan frontend.
+- Bukti UI menangani `misconfigured`, `empty`, dan `error`.
+- Hasil desktop/mobile smoke test.
+- Tidak ada secret atau direct provider URL pada bundle/browser.
+
+### Checklist integrator di Railway
+
+```text
+[ ] main sinkron dan seluruh test lulus
+[ ] railway.json sesuai app.main:app
+[ ] healthcheckPath adalah /api/health
+[ ] domain publik dibuat
+[ ] APP_ENV=production
+[ ] DATABASE_URL tersedia dan koneksi berhasil
+[ ] APIFY_TOKEN/GEMINI_API_KEYS/REFRESH_TOKEN disimpan sebagai secret
+[ ] migration production selesai
+[ ] health HTTP 200
+[ ] snapshot cache dapat dibaca
+[ ] satu refresh terbatas berhasil atau status misconfigured tampil benar
+[ ] build/deploy log tidak membocorkan credential
+[ ] rollback target diketahui
+```

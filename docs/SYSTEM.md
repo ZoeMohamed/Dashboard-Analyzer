@@ -376,3 +376,81 @@ Aturan UI:
 
 Live integration test harus diberi marker terpisah agar test normal tidak
 menghabiskan kuota provider.
+
+## 13. Arsitektur deployment Railway
+
+```text
+GitHub main
+    │ push
+    ▼
+Railway build (Railpack)
+    │
+    ▼
+FastAPI web service ─────► Supabase PostgreSQL
+    │                           ▲
+    ├────► Apify                │ evidence, run, analysis
+    ├────► Gemini               │
+    └────► sumber publik        │
+    │
+    ▼
+Railway public domain
+```
+
+Boundary keamanan:
+
+- Browser hanya mengakses FastAPI melalui HTTPS.
+- FastAPI adalah satu-satunya komponen yang membaca credential provider.
+- Supabase secret/service credential tidak pernah dikirim ke browser.
+- Railway Variables adalah sumber konfigurasi runtime production.
+- Build tidak memerlukan API key untuk menjalankan test unit.
+
+### Proses startup
+
+1. Railway menyediakan `$PORT` dan environment variables.
+2. Uvicorn bind ke `0.0.0.0:$PORT`.
+3. Aplikasi memvalidasi configuration tanpa mencetak secret.
+4. Connection pool database dibuka secara bounded.
+5. HTTP server menjadi siap.
+6. Railway memanggil `/api/health`.
+7. Background scheduler hanya dimulai setelah komponen inti siap.
+
+Startup tidak boleh menunggu scraping, polling Apify, atau analisis Gemini.
+
+### Environment parity
+
+Nama variable lokal dan production harus sama. Perbedaannya hanya nilai:
+
+```text
+local:      .env (tidak di-commit)
+production: Railway Variables
+example:    .env.example (nama dan contoh aman)
+```
+
+Semua configuration dibaca melalui `app/config.py`. Modul lain tidak boleh
+memanggil `os.getenv` secara acak karena sulit diuji dan diaudit.
+
+### Release gate
+
+Sebelum deploy:
+
+- Contract, unit, integration, dan API test lulus.
+- Migration telah direview dan dites pada database non-production.
+- `.env` tidak terlacak Git.
+- Tidak ada credential pada diff dan log fixture.
+- `railway.json` menunjuk entrypoint yang benar.
+
+Sesudah deploy:
+
+- `/api/health` HTTP 200.
+- `/docs` atau OpenAPI tersedia sesuai keputusan environment.
+- Database dapat membaca snapshot.
+- Halaman utama merender tanpa console error.
+- Refresh tanpa credential menunjukkan `misconfigured`, bukan crash.
+- Satu provider timeout tidak mengubah health service menjadi gagal.
+
+### Scaling POC
+
+POC dimulai dengan satu web replica agar in-memory lock/scheduler tidak berjalan
+ganda. Jika replica ditambah, lock dan job ownership harus dipindahkan ke
+PostgreSQL/queue terlebih dahulu. Jangan menaikkan replica sebelum pipeline aman
+untuk eksekusi paralel lintas proses.

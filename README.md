@@ -126,17 +126,111 @@ Nilai sebenarnya hanya boleh berada di `.env`, Supabase, atau Railway Variables.
 Jangan commit `.env`. Credential yang pernah dibagikan melalui chat harus
 dirotasi sebelum deployment final.
 
-## Railway
+## Deployment Railway
 
-Start command yang akan dipakai:
+Dokumentasi resmi:
+
+- FastAPI: <https://docs.railway.com/guides/fastapi>
+- Start command: <https://docs.railway.com/deployments/start-command>
+- Variables: <https://docs.railway.com/variables>
+- Health checks: <https://docs.railway.com/reference/healthchecks>
+
+### File deployment yang akan disiapkan integrator
+
+```text
+requirements.txt   # dependency Python dengan versi terkunci
+railway.json       # build, start command, restart, dan health check
+.env.example       # nama variable tanpa nilai secret
+app/main.py        # menyediakan objek FastAPI bernama app
+```
+
+Konfigurasi target `railway.json`:
+
+```json
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK"
+  },
+  "deploy": {
+    "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}
+```
+
+Jangan membuat file tersebut sebelum entrypoint FastAPI tersedia. Setelah dibuat,
+integrator memverifikasi schema/config dengan dokumentasi Railway terbaru.
+
+### Deploy pertama dari GitHub
+
+1. Pastikan seluruh test lulus dan `main` sudah dipush.
+2. Masuk Railway dan pilih **New Project**.
+3. Pilih **Deploy from GitHub repo**.
+4. Pilih repository `ZoeMohamed/POC_Scrapper` dan branch `main`.
+5. Railway harus mendeteksi root repository; tidak ada root directory tambahan.
+6. Tambahkan environment variables pada tab **Variables**.
+7. Deploy staged changes.
+8. Buka **Settings → Networking → Generate Domain**.
+9. Pastikan `https://<domain>/api/health` mengembalikan HTTP 200.
+10. Uji dashboard dan satu snapshot tanpa menjalankan refresh provider besar.
+
+### Railway Variables
+
+Variable aplikasi minimal:
+
+```text
+APP_ENV=production
+DATABASE_URL=<Supabase pooled/server connection string>
+APIFY_TOKEN=<secret>
+GEMINI_API_KEYS=<secret, format ditentukan app/config.py>
+REFRESH_TOKEN=<random secret>
+LOG_LEVEL=INFO
+```
+
+`PORT` disediakan otomatis oleh Railway dan tidak perlu dibuat manual. Secret
+dimasukkan satu per satu melalui Railway Variables dan dapat di-**seal**. Jangan
+menempelkan secret ke `railway.json`, Dockerfile, README, log, atau frontend.
+
+### Database production
+
+Production menggunakan Supabase PostgreSQL melalui `DATABASE_URL`. Aplikasi
+tidak boleh menyimpan evidence di SQLite atau file lokal Railway karena
+filesystem service bersifat sementara. Migration dijalankan secara eksplisit
+oleh integrator dan harus idempotent/tercatat; jangan menjalankan migration
+destruktif otomatis pada setiap startup.
+
+### Health dan startup
+
+Start command production:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
-Railway menerima traffic hanya setelah `/api/health` berhasil. Database wajib
-menggunakan PostgreSQL/Supabase; jangan mengandalkan SQLite di filesystem
-deployment.
+`/api/health` tidak boleh memanggil Apify, Gemini, atau scraping. Health response
+harus cepat dan minimal menunjukkan versi/service hidup. Readiness database
+dapat dilaporkan terpisah tanpa membocorkan connection string.
+
+### Update, rollback, dan troubleshooting
+
+- Setiap push ke `main` dapat memicu deployment baru setelah GitHub terhubung.
+- Jika deploy gagal, baca **Build Logs** dahulu; jika runtime gagal, baca
+  **Deploy Logs**.
+- `No start command found`: periksa `railway.json` dan path `app.main:app`.
+- Health check timeout: pastikan server bind ke `0.0.0.0:$PORT` dan health tidak
+  menunggu provider eksternal.
+- Database connection gagal: periksa `DATABASE_URL`, SSL/pooling, dan migration.
+- Data hilang setelah redeploy: pastikan data ditulis ke PostgreSQL, bukan file.
+- Provider error: periksa variable server; jangan pernah mencetak nilainya.
+- Rollback dilakukan ke deployment Railway terakhir yang sehat atau dengan
+  revert commit Git, bukan force-push riwayat `main`.
+
+Deployment belum dianggap berhasil hanya karena build hijau. Domain publik,
+health endpoint, koneksi database, snapshot cache, dan satu alur UI harus diuji.
 
 ## Definition of done
 
