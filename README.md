@@ -129,6 +129,9 @@ REFRESH_TOKEN
 `APIFY_TOKENS` dan `GEMINI_API_KEYS` adalah daftar dipisahkan koma untuk rotasi
 terbatas. Variable tunggal hanya fallback kompatibilitas jika pool belum diisi.
 Parser wajib membuang nilai kosong/duplikat dan tidak pernah mencetak key.
+Pool meningkatkan failover, bukan otomatis melipatgandakan quota: Gemini
+menerapkan rate limit per project, sedangkan penggunaan Apify dibebankan ke
+account pemilik token.
 
 Nilai sebenarnya hanya boleh berada di `.env`, Supabase, atau Railway Variables.
 Jangan commit `.env`. Credential yang pernah dibagikan melalui chat harus

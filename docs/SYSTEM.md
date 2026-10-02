@@ -302,6 +302,10 @@ ketentuan provider. Pool key hanya untuk credential sah yang memang dimiliki tim
   cooldown, atau unavailable—tidak boleh menampilkan nilai/prefix/suffix key.
 - Rotasi tidak menggantikan daily/monthly application budget dan tidak boleh
   digunakan untuk mengakali ketentuan atau quota provider.
+- Gemini menerapkan rate limit per project, bukan per API key. Beberapa key dari
+  project yang sama berbagi quota dan tidak boleh dianggap menambah kapasitas.
+- Actor Apify berjalan dan dibebankan pada account yang terkait token. Beberapa
+  token dari account yang sama tetap berbagi penggunaan/billing account itu.
 
 ## 8. Database minimum
 
