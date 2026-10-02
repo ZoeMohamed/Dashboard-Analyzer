@@ -119,10 +119,16 @@ Nama minimal yang direncanakan:
 ```text
 APP_ENV
 DATABASE_URL
+APIFY_TOKENS
 APIFY_TOKEN
 GEMINI_API_KEYS
+GEMINI_API_KEY
 REFRESH_TOKEN
 ```
+
+`APIFY_TOKENS` dan `GEMINI_API_KEYS` adalah daftar dipisahkan koma untuk rotasi
+terbatas. Variable tunggal hanya fallback kompatibilitas jika pool belum diisi.
+Parser wajib membuang nilai kosong/duplikat dan tidak pernah mencetak key.
 
 Nilai sebenarnya hanya boleh berada di `.env`, Supabase, atau Railway Variables.
 Jangan commit `.env`. Credential yang pernah dibagikan melalui chat harus
@@ -187,8 +193,8 @@ Variable aplikasi minimal:
 ```text
 APP_ENV=production
 DATABASE_URL=<Supabase pooled/server connection string>
-APIFY_TOKEN=<secret>
-GEMINI_API_KEYS=<secret, format ditentukan app/config.py>
+APIFY_TOKENS=<comma-separated secret pool>
+GEMINI_API_KEYS=<comma-separated secret pool>
 REFRESH_TOKEN=<random secret>
 LOG_LEVEL=INFO
 ```

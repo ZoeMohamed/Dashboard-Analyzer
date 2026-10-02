@@ -281,6 +281,28 @@ Strategi analyzer:
 Tidak boleh merotasi credential untuk menghindari batas layanan atau melanggar
 ketentuan provider. Pool key hanya untuk credential sah yang memang dimiliki tim.
 
+### Credential pool dan rotasi terbatas
+
+- `GEMINI_API_KEYS` dan `APIFY_TOKENS` berisi daftar dipisahkan koma.
+- `GEMINI_API_KEY` dan `APIFY_TOKEN` hanya fallback kompatibilitas ketika pool
+  masing-masing kosong; alias tidak dihitung dua kali.
+- Config membersihkan whitespace, membuang nilai kosong/duplikat, menyimpan
+  secret sebagai tipe rahasia, dan menolak production jika provider aktif tetapi
+  pool-nya kosong.
+- Pemilihan awal memakai round-robin yang aman terhadap concurrent request.
+- Respons quota/rate-limit menaruh key aktif dalam cooldown, menghormati
+  `Retry-After` bila tersedia, lalu mencoba key sehat berikutnya.
+- Respons authentication/permission mengarantina key untuk proses berjalan dan
+  mencoba key sehat berikutnya hanya dalam batas usaha.
+- Timeout atau server error boleh mencoba key berikutnya sekali dalam batas yang
+  sama; invalid request/payload tidak boleh diulang dengan key lain.
+- Usaha per operasi dibatasi oleh `*_KEY_MAX_ATTEMPTS` dan jumlah key sehat.
+  Ketika habis, kembalikan domain error stabil dan gunakan cache/fallback.
+- Log, database, API, health, serta UI hanya boleh menampilkan jumlah key sehat,
+  cooldown, atau unavailable—tidak boleh menampilkan nilai/prefix/suffix key.
+- Rotasi tidak menggantikan daily/monthly application budget dan tidak boleh
+  digunakan untuk mengakali ketentuan atau quota provider.
+
 ## 8. Database minimum
 
 Tabel inti:

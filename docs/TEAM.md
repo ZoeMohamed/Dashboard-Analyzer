@@ -413,7 +413,8 @@ OUTPUT KHUSUS TURN PERTAMA:
    StreamEvent, SourceName, SourceStatus, sentiment, analyzer, trigger, dan
    error code sesuai docs/SYSTEM.md dan docs/FINAL_OUTPUT.md.
 3. Buat app/config.py menggunakan pydantic-settings. Secret harus memiliki
-   representasi aman dan semua limit memiliki default POC bounded.
+   representasi aman; parse/deduplikasi `GEMINI_API_KEYS` dan `APIFY_TOKENS`,
+   dukung alias singular, serta beri default bounded untuk attempt/cooldown.
 4. Buat app/main.py dengan FastAPI, GET /api/health, dan composition skeleton.
    Health tidak boleh memanggil provider eksternal.
 5. Buat requirements.txt dengan versi dependency terkunci yang benar-benar
@@ -535,7 +536,8 @@ IMPLEMENTASI TURN AWAL:
 2. Buat parser pure function per sumber sebelum live HTTP integration.
 3. Tambahkan fixture payload kecil dan disanitasi untuk enam sumber.
 4. Buat Apify client bounded: timeout, polling interval, maximum polls,
-   cancellation, dataset limit, provider run ID, dan error mapping.
+   cancellation, dataset limit, provider run ID, error mapping, serta rotasi
+   token round-robin/cooldown sesuai docs/SYSTEM.md.
 5. Setiap adapter menerima Topic dan limit, lalu mengembalikan CollectionResult.
 6. Jangan melakukan sentiment atau database upsert.
 7. Jangan menyimpulkan data relevan akhir; adapter boleh memberi kandidat,
@@ -643,7 +645,8 @@ IMPLEMENTASI TURN AWAL:
 6. Tangani double negation sederhana: “nggak mengecewakan” positif.
 7. Caption promosi tanpa opini jelas sebaiknya netral.
 8. Buat Gemini adapter yang meminta JSON terstruktur dan memvalidasi hasil
-   melalui contracts; tidak boleh dipercaya tanpa validation.
+   melalui contracts; gunakan key pool round-robin/cooldown dan jangan percaya
+   output tanpa validation.
 9. Jika Gemini timeout/quota/invalid JSON, fallback lokal bekerja atau analysis
    tetap pending sesuai kontrak. Evidence tidak boleh hilang.
 10. Batasi batch, concurrency, timeout, dan jumlah aspek.

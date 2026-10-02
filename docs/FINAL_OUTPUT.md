@@ -280,7 +280,8 @@ Composition root aplikasi:
 Satu-satunya tempat membaca environment variables. Bertanggung jawab atas:
 
 - Validasi mode development/production.
-- Parsing daftar Gemini key secara aman.
+- Parsing pool Gemini dan Apify dipisahkan koma secara aman, deduplikasi, alias
+  compatibility, bounded attempts, cooldown, serta round-robin concurrency-safe.
 - Konfigurasi database.
 - Limit, timeout, TTL, dan usage budget.
 - Daftar source aktif.
@@ -479,6 +480,8 @@ Adapter Gemini server-side:
 - Structured JSON output.
 - Batch bounded.
 - Timeout dan quota error mapping.
+- Memilih key dari pool Gemini secara round-robin; quota/auth failure memakai
+  key sehat berikutnya secara bounded dan tidak mengulang invalid request.
 - Validasi output dengan contracts.
 - Fallback tanpa menghapus evidence.
 
@@ -547,6 +550,8 @@ HTTP client bersama untuk:
 - Membaca dataset.
 - Memetakan status/error Apify.
 - Mencatat provider run ID dan usage.
+- Memilih token dari pool Apify secara round-robin, memberi cooldown/quarantine
+  pada token bermasalah, dan membatasi jumlah fallback per operasi.
 
 Token selalu dikirim server-side dan tidak dicetak ke log.
 
@@ -783,7 +788,7 @@ bersama tanpa memperbarui contracts, tests, dan dokumentasi.
 
 ## 16. Kondisi gagal yang harus tetap usable
 
-### APIFY_TOKEN tidak ada
+### APIFY_TOKENS dan APIFY_TOKEN tidak ada
 
 - Health tetap hidup.
 - Source terkait berstatus `misconfigured`.
@@ -792,6 +797,8 @@ bersama tanpa memperbarui contracts, tests, dan dokumentasi.
 
 ### Gemini quota habis
 
+- Key aktif masuk cooldown dan adapter mencoba key sehat berikutnya secara
+  bounded sebelum menyatakan pool tidak tersedia.
 - Evidence tetap disimpan.
 - Fallback lokal digunakan atau analysis tetap pending.
 - UI menunjukkan analyzer/fallback secara jujur.
