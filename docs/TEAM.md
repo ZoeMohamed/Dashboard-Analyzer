@@ -1,8 +1,8 @@
 # Team Workflow — 4 Orang
 
 Dokumen ini mengatur pekerjaan paralel empat anggota selama clean rebuild.
-Setiap anggota wajib membaca `README.md` dan `docs/SYSTEM.md` sebelum dokumen
-ini.
+Setiap anggota wajib membaca `README.md`, `docs/SYSTEM.md`, dan
+`docs/FINAL_OUTPUT.md` sebelum dokumen ini.
 
 ## 1. Aturan bersama
 
@@ -215,7 +215,7 @@ Integrator bertanggung jawab atas:
 - Menggabungkan pull request sesuai dependency.
 - Menjalankan seluruh test setelah setiap merge.
 - Memastikan environment lokal dan Railway memakai konfigurasi yang sama.
-- Menjaga maksimal tiga dokumen Markdown utama ini.
+- Menjaga empat dokumen Markdown utama tetap konsisten.
 - Menghubungkan repository GitHub ke Railway dan mengelola production variables.
 - Menjalankan migration production serta smoke test setelah deployment.
 
@@ -241,7 +241,7 @@ untuk menunggu tanpa bekerja.
 
 ### 00:00–00:30 — Fondasi bersama
 
-- Semua membaca tiga dokumen.
+- Semua membaca empat dokumen.
 - Integrator membuat contracts, health endpoint, config, dan test command.
 - Semua branch dibuat dari commit fondasi yang sama.
 
@@ -314,7 +314,7 @@ Risiko atau pekerjaan tersisa:
 Setiap anggota membuka AI dari root repo dan memberikan instruksi:
 
 ```text
-Baca README.md, docs/SYSTEM.md, dan docs/TEAM.md sepenuhnya.
+Baca README.md, docs/SYSTEM.md, docs/FINAL_OUTPUT.md, dan docs/TEAM.md sepenuhnya.
 Saya adalah anggota N dan hanya memiliki ownership file yang tercantum untuk
 anggota N. Jangan edit app/contracts.py atau app/main.py. Implementasikan output
 wajib dan test minimum untuk peran saya. Jangan gunakan branch legacy sebagai

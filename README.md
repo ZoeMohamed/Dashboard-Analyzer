@@ -16,7 +16,8 @@ berurutan sebelum menulis kode:
 
 1. `README.md` — tujuan, scope, setup, dan aturan umum.
 2. `docs/SYSTEM.md` — arsitektur, kontrak data, pipeline, dan API.
-3. `docs/TEAM.md` — pembagian kerja, ownership file, Git, dan jadwal integrasi.
+3. `docs/FINAL_OUTPUT.md` — bentuk aplikasi final dan fungsi setiap file.
+4. `docs/TEAM.md` — pembagian kerja, ownership file, Git, dan jadwal integrasi.
 
 Jika implementasi bertentangan dengan dokumen, hentikan perubahan dan selaraskan
 dokumen bersama tim terlebih dahulu.
@@ -81,7 +82,8 @@ POC_Scrapper/
 ├── web/                     # dashboard
 ├── docs/
 │   ├── SYSTEM.md
-│   └── TEAM.md
+│   ├── TEAM.md
+│   └── FINAL_OUTPUT.md
 ├── .env.example             # nama variabel tanpa secret
 ├── README.md
 └── requirements.txt
