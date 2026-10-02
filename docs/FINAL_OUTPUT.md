@@ -1,13 +1,13 @@
 # Final Output Blueprint
 
-Dokumen ini menjelaskan dengan konkret seperti apa POC Scrapper ketika selesai.
+Dokumen ini menjelaskan dengan konkret seperti apa Dashboard Analyzer ketika selesai.
 Ini adalah target hasil akhir, bukan deskripsi kondisi repository saat ini.
 Semua anggota dan AI agent harus memakai dokumen ini untuk memastikan modul
 yang dibuat dapat digabung menjadi satu aplikasi utuh.
 
 ## 1. Hasil akhir dalam satu kalimat
 
-POC Scrapper adalah aplikasi web yang menerima keyword produk UMKM, mengambil
+Dashboard Analyzer adalah aplikasi web yang menerima keyword produk UMKM, mengambil
 evidence publik dari TikTok, Instagram, Facebook, Google Maps, Shopee, dan
 YouTube, menyimpan hasil secara persisten, menyaring relevansi, menganalisis
 sentimen Bahasa Indonesia, lalu menampilkan tren dan opini beserta link sumber
@@ -37,7 +37,7 @@ Pengguna tidak perlu memahami Apify, Gemini, Supabase, atau sistem internal.
 
 Menampilkan:
 
-- Nama aplikasi `POC Scrapper`.
+- Nama aplikasi `Dashboard Analyzer`.
 - Produk aktif.
 - Waktu snapshot terakhir.
 - Indikator koneksi/progress.
@@ -135,7 +135,7 @@ kebetulan menyebut keyword produk harus ditolak.
 ## 4. Struktur repository final
 
 ```text
-POC_Scrapper/
+Dashboard-Analyzer/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py

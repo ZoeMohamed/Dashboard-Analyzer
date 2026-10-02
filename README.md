@@ -1,6 +1,6 @@
-# POC Scrapper
+# Dashboard Analyzer
 
-POC Scrapper adalah dashboard pemantauan tren dan opini produk UMKM Indonesia.
+Dashboard Analyzer adalah dashboard pemantauan tren dan opini produk UMKM Indonesia.
 Aplikasi mengumpulkan bukti publik dari beberapa sumber, menyaring data yang
 relevan dengan produk, menganalisis sentimen Bahasa Indonesia, lalu menyajikan
 hasil yang dapat ditelusuri kembali ke URL sumber.
@@ -68,7 +68,7 @@ yang dikunci versinya. Jangan menambahkan framework kedua untuk fungsi yang sama
 ## Struktur target
 
 ```text
-POC_Scrapper/
+Dashboard-Analyzer/
 ├── app/
 │   ├── api/                 # HTTP routes dan dependency wiring
 │   ├── database/            # koneksi, repository, dan migration helpers
@@ -97,7 +97,7 @@ Struktur boleh bertambah jika ada kebutuhan nyata, tetapi ownership pada
 Perintah ini berlaku setelah fondasi aplikasi dibuat:
 
 ```bash
-cd "/Users/zoemohamed/project/POC_Scrapper"
+cd "/Users/zoemohamed/project/Dashboard-Analyzer"
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -172,7 +172,7 @@ integrator memverifikasi schema/config dengan dokumentasi Railway terbaru.
 1. Pastikan seluruh test lulus dan `main` sudah dipush.
 2. Masuk Railway dan pilih **New Project**.
 3. Pilih **Deploy from GitHub repo**.
-4. Pilih repository `ZoeMohamed/POC_Scrapper` dan branch `main`.
+4. Pilih repository `ZoeMohamed/Dashboard-Analyzer` dan branch `main`.
 5. Railway harus mendeteksi root repository; tidak ada root directory tambahan.
 6. Tambahkan environment variables pada tab **Variables**.
 7. Deploy staged changes.
@@ -252,7 +252,7 @@ Rebuild dinyatakan selesai apabila:
 
 ## Aturan utama
 
-- Kerjakan hanya pada repo `POC_Scrapper`, bukan `poc_python`.
+- Kerjakan hanya pada repo `Dashboard-Analyzer`, bukan `poc_python`.
 - Jangan mengubah kontrak lintas tim tanpa persetujuan integrator.
 - Jangan melakukan force-push ke `main` setelah pekerjaan tim dimulai.
 - Jangan menambahkan seed palsu ke jalur produksi.

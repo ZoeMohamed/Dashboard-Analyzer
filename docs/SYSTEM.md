@@ -1,6 +1,6 @@
 # System Specification
 
-Dokumen ini adalah sumber kebenaran teknis POC Scrapper. Semua adapter sumber,
+Dokumen ini adalah sumber kebenaran teknis Dashboard Analyzer. Semua adapter sumber,
 repository, intelligence, API, dan UI harus mengikuti kontrak yang sama.
 
 ## 1. Tujuan sistem

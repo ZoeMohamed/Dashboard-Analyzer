@@ -330,9 +330,9 @@ ownership, test, atau format laporan.
 1. Setiap anggota memakai clone atau worktree sendiri. Jangan membuka empat
    agent pada working directory yang sama karena perpindahan branch dan file
    sementara akan saling mengganggu.
-2. Path `/Users/zoemohamed/project/POC_Scrapper` berlaku pada komputer utama.
+2. Path `/Users/zoemohamed/project/Dashboard-Analyzer` berlaku pada komputer utama.
    Anggota di komputer lain menggantinya dengan root clone masing-masing dan
-   memverifikasi remote menunjuk ke `ZoeMohamed/POC_Scrapper`.
+   memverifikasi remote menunjuk ke `ZoeMohamed/Dashboard-Analyzer`.
 3. Kirim prompt Anggota 2 terlebih dahulu. Tunggu fondasi masuk ke `main` dan
    salin nilai `FOUNDATION_SHA` dari laporannya.
 4. Buat `team/1-sources`, `team/2-platform`, `team/3-intelligence`, dan
@@ -361,10 +361,10 @@ Ganti teks `FOUNDATION_SHA` dengan SHA yang dilaporkan, bukan nama literal.
 Prompt ini dijalankan pertama kali sebelum tiga anggota lain mulai coding.
 
 ```text
-Anda adalah Anggota 2 sekaligus integrator/team lead clean rebuild POC Scrapper.
+Anda adalah Anggota 2 sekaligus integrator/team lead clean rebuild Dashboard Analyzer.
 
 ROOT REPOSITORY RESMI:
-/Users/zoemohamed/project/POC_Scrapper
+/Users/zoemohamed/project/Dashboard-Analyzer
 
 Repository lama /Users/zoemohamed/project/poc_python dan branch
 archive/legacy-poc bukan fondasi implementasi. Jangan menyalin file atau
@@ -472,10 +472,10 @@ sebelum kedua langkah itu selesai.
 Jalankan setelah integrator memberikan `FOUNDATION_SHA`.
 
 ```text
-Anda adalah Anggota 1, pemilik source adapters POC Scrapper.
+Anda adalah Anggota 1, pemilik source adapters Dashboard Analyzer.
 
 ROOT REPOSITORY RESMI:
-/Users/zoemohamed/project/POC_Scrapper
+/Users/zoemohamed/project/Dashboard-Analyzer
 
 BRANCH WAJIB:
 team/1-sources
@@ -589,10 +589,10 @@ Jalankan setelah integrator memberikan `FOUNDATION_SHA`.
 
 ```text
 Anda adalah Anggota 3, pemilik intelligence, relevance, dan sentimen Bahasa
-Indonesia untuk POC Scrapper.
+Indonesia untuk Dashboard Analyzer.
 
 ROOT REPOSITORY RESMI:
-/Users/zoemohamed/project/POC_Scrapper
+/Users/zoemohamed/project/Dashboard-Analyzer
 
 BRANCH WAJIB:
 team/3-intelligence
@@ -694,10 +694,10 @@ Mulai dengan membaca dan memverifikasi, baru menulis kode.
 Jalankan setelah integrator memberikan `FOUNDATION_SHA`.
 
 ```text
-Anda adalah Anggota 4, pemilik API dan frontend dashboard POC Scrapper.
+Anda adalah Anggota 4, pemilik API dan frontend Dashboard Analyzer.
 
 ROOT REPOSITORY RESMI:
-/Users/zoemohamed/project/POC_Scrapper
+/Users/zoemohamed/project/Dashboard-Analyzer
 
 BRANCH WAJIB:
 team/4-frontend
