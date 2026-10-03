@@ -57,12 +57,18 @@ class Settings(BaseSettings):
     snapshot_evidence_limit: int = Field(default=100, ge=1, le=500)
     max_active_topics: int = Field(default=20, ge=1, le=100)
     source_ttl_minutes: int = Field(default=360, ge=5, le=10_080)
+    default_city: str = Field(default="Bandung", min_length=2, max_length=60)
+    # Off by default: every scheduled run of an Apify source spends budget.
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: int = Field(default=300, ge=30, le=86_400)
+    scheduler_max_runs_per_tick: int = Field(default=6, ge=1, le=60)
 
     apify_tokens: SecretPool = Field(default_factory=list)
     apify_token: SecretStr | None = None
     apify_key_max_attempts: int = Field(default=2, ge=1, le=5)
     apify_key_cooldown_seconds: int = Field(default=300, ge=10, le=86_400)
     apify_daily_run_limit: int = Field(default=30, ge=1, le=10_000)
+    apify_actor_timeout_seconds: int = Field(default=600, ge=60, le=3_600)
 
     gemini_api_keys: SecretPool = Field(default_factory=list)
     gemini_api_key: SecretStr | None = None

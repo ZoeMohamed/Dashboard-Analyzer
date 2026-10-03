@@ -14,6 +14,7 @@ from typing import Any, Iterable
 
 from app.contracts import (
     Analysis,
+    AnalyzerName,
     Evidence,
     EvidenceItem,
     EvidenceMetrics,
@@ -35,6 +36,10 @@ def _topic_slug(name: str) -> str:
     return "".join(char for char in value if char.isalnum() or char == "-")[:110] or "topic"
 
 
+def _has_metrics(metrics: EvidenceMetrics) -> bool:
+    return any(value is not None for value in metrics.model_dump().values())
+
+
 def evidence_key(topic_id: str, evidence: Evidence) -> str:
     # The same public post may be relevant to more than one monitoring topic.
     # Namespacing by topic prevents a primary-key collision and cross-topic
@@ -51,6 +56,7 @@ class InMemoryRepository:
         self.analyses: dict[str, Analysis] = {}
         self.runs: dict[str, SourceRun] = {}
         self.usage: dict[tuple[str, str, date], ProviderUsage] = {}
+        self.metric_snapshots: dict[str, list[tuple[datetime, EvidenceMetrics]]] = {}
         self._lock = asyncio.Lock()
 
     async def create_topic(self, payload: TopicCreate) -> Topic:
@@ -69,6 +75,9 @@ class InMemoryRepository:
     async def list_topics(self, *, active_only: bool = True) -> list[Topic]:
         values = [item for item in self.topics.values() if item.is_active or not active_only]
         return sorted(values, key=lambda item: item.created_at, reverse=True)
+
+    async def count_active_topics(self) -> int:
+        return sum(1 for item in self.topics.values() if item.is_active)
 
     async def get_topic(self, topic_id: str) -> Topic:
         topic = self.topics.get(topic_id)
@@ -95,7 +104,24 @@ class InMemoryRepository:
                 if key not in self.evidence:
                     inserted += 1
                 self.evidence[key] = item.model_copy(update={"id": key})
+                if _has_metrics(item.metrics):
+                    self.metric_snapshots.setdefault(key, []).append((item.collected_at, item.metrics))
         return inserted
+
+    async def list_topic_evidence(self, topic_id: str, *, source: SourceName | None = None, limit: int = 2_000) -> list[EvidenceItem]:
+        values = [item for item in self.evidence.values() if item.topic_id == topic_id and (source is None or item.source == source)]
+        values.sort(key=lambda item: (item.collected_at, item.id or ""), reverse=True)
+        return [EvidenceItem(**item.model_dump(), analysis=self.analyses.get(item.id)) for item in values[:limit]]
+
+    async def metric_history(self, evidence_ids: Iterable[str]) -> dict[str, list[tuple[datetime, int | None]]]:
+        return {
+            evidence_id: sorted((captured_at, metrics.views) for captured_at, metrics in self.metric_snapshots.get(evidence_id, []))
+            for evidence_id in evidence_ids
+        }
+
+    async def latest_run(self, topic_id: str, source: SourceName) -> SourceRun | None:
+        runs = [run for run in self.runs.values() if run.topic_id == topic_id and run.source == source]
+        return max(runs, key=lambda run: run.started_at, default=None)
 
     async def upsert_analysis(self, analysis: Analysis) -> None:
         async with self._lock:
@@ -103,6 +129,12 @@ class InMemoryRepository:
 
     async def missing_analysis_ids(self, evidence_ids: Iterable[str]) -> set[str]:
         return {evidence_id for evidence_id in evidence_ids if evidence_id not in self.analyses}
+
+    async def fallback_analysis_ids(self, evidence_ids: Iterable[str]) -> set[str]:
+        return {
+            evidence_id for evidence_id in evidence_ids
+            if evidence_id in self.analyses and self.analyses[evidence_id].analyzer == AnalyzerName.LOCAL_FALLBACK
+        }
 
     async def record_usage(self, usage: ProviderUsage) -> ProviderUsage:
         source = usage.source.value if isinstance(usage.source, SourceName) else (usage.source or "global")
@@ -137,9 +169,10 @@ class InMemoryRepository:
         value = self.usage.get((provider, source_key, usage_date))
         return value or ProviderUsage(provider=provider, source=None if source_key == "global" else source_key, usage_date=usage_date)
 
-    async def snapshot(self, topic_id: str, *, limit: int = 100, cursor: str | None = None) -> Snapshot:
+    async def snapshot(self, topic_id: str, *, limit: int = 100, cursor: str | None = None, source: SourceName | None = None) -> Snapshot:
         topic = await self.get_topic(topic_id)
-        values = [item for item in self.evidence.values() if item.topic_id == topic_id]
+        topic_values = [item for item in self.evidence.values() if item.topic_id == topic_id]
+        values = [item for item in topic_values if source is None or item.source == source]
         values.sort(key=lambda item: (item.collected_at, item.id or ""), reverse=True)
         start = 0
         if cursor:
@@ -158,12 +191,12 @@ class InMemoryRepository:
             if run.source not in latest:
                 latest[run.source] = run
         summaries = []
-        for source in SourceName:
-            run = latest.get(source)
-            source_count = sum(1 for item in values if item.source == source)
+        for name in SourceName:
+            run = latest.get(name)
+            source_count = sum(1 for item in topic_values if item.source == name)
             summaries.append(
                 SourceSummary(
-                    source=source,
+                    source=name,
                     evidence_count=source_count,
                     status=run.status if run else SourceStatus.MISCONFIGURED,
                     last_finished_at=run.finished_at if run else None,
@@ -228,6 +261,9 @@ class PostgresRepository:
             raise TopicNotFoundError(f"Topic tidak ditemukan: {topic_id}")
         return _topic(row)
 
+    async def count_active_topics(self) -> int:
+        return await self.pool.fetchval("select count(*) from topics where is_active = true")
+
     async def delete_topic(self, topic_id: str) -> None:
         result = await self.pool.execute("update topics set is_active = false, updated_at = now() where id = $1 and is_active = true", topic_id)
         if result.endswith("0"):
@@ -279,7 +315,47 @@ class PostgresRepository:
                     )
                     if was_inserted:
                         inserted += 1
+                    if _has_metrics(item.metrics):
+                        await connection.execute(
+                            """insert into evidence_metric_snapshots
+                              (evidence_id, captured_at, views, likes, comments, shares, rating, review_count, price, sold)
+                              values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
+                            evidence_id, item.collected_at, item.metrics.views, item.metrics.likes, item.metrics.comments,
+                            item.metrics.shares, item.metrics.rating, item.metrics.review_count, item.metrics.price, item.metrics.sold,
+                        )
         return inserted
+
+    async def list_topic_evidence(self, topic_id: str, *, source: SourceName | None = None, limit: int = 2_000) -> list[EvidenceItem]:
+        rows = await self.pool.fetch(
+            """select * from evidence where topic_id=$1 and ($2::text is null or source=$2)
+               order by collected_at desc, id desc limit $3""",
+            topic_id, _source_value(source), limit,
+        )
+        evidence = [_evidence(row) for row in rows]
+        ids = [item.id for item in evidence]
+        analysis_rows = await self.pool.fetch("select * from analyses where evidence_id = any($1::text[])", ids) if ids else []
+        by_evidence = {row["evidence_id"]: _analysis(row) for row in analysis_rows}
+        return [EvidenceItem(**item.model_dump(), analysis=by_evidence.get(item.id)) for item in evidence]
+
+    async def metric_history(self, evidence_ids: Iterable[str]) -> dict[str, list[tuple[datetime, int | None]]]:
+        ids = list(dict.fromkeys(evidence_ids))
+        history: dict[str, list[tuple[datetime, int | None]]] = {evidence_id: [] for evidence_id in ids}
+        if not ids:
+            return history
+        rows = await self.pool.fetch(
+            "select evidence_id, captured_at, views from evidence_metric_snapshots where evidence_id = any($1::text[]) order by captured_at",
+            ids,
+        )
+        for row in rows:
+            history[row["evidence_id"]].append((row["captured_at"], row["views"]))
+        return history
+
+    async def latest_run(self, topic_id: str, source: SourceName) -> SourceRun | None:
+        row = await self.pool.fetchrow(
+            "select * from source_runs where topic_id=$1 and source=$2 order by started_at desc limit 1",
+            topic_id, _source_value(source),
+        )
+        return _run(row) if row else None
 
     async def upsert_analysis(self, analysis: Analysis) -> None:
         await self.pool.execute(
@@ -299,6 +375,15 @@ class PostgresRepository:
         rows = await self.pool.fetch("select evidence_id from analyses where evidence_id = any($1::text[])", ids)
         return set(ids) - {row["evidence_id"] for row in rows}
 
+    async def fallback_analysis_ids(self, evidence_ids: Iterable[str]) -> set[str]:
+        ids = list(dict.fromkeys(evidence_ids))
+        if not ids:
+            return set()
+        rows = await self.pool.fetch(
+            "select evidence_id from analyses where evidence_id = any($1::text[]) and analyzer = 'local_fallback'", ids,
+        )
+        return {row["evidence_id"] for row in rows}
+
     async def record_usage(self, usage: ProviderUsage) -> ProviderUsage:
         source = usage.source.value if isinstance(usage.source, SourceName) else (usage.source or "global")
         row = await self.pool.fetchrow(
@@ -315,12 +400,14 @@ class PostgresRepository:
     async def reserve_usage(self, provider: str, source: SourceName | None, usage_date: date, units: int, limit: int) -> ProviderUsage | None:
         source_key = source.value if isinstance(source, SourceName) else (source or "global")
         row = await self.pool.fetchrow(
+            # The select guard also covers the first reservation of the day,
+            # which has no existing row for the conflict clause to check.
             """insert into provider_usage (provider, source, usage_date, requests, units)
-               values ($1,$2,$3,1,$4)
+               select $1::text, $2::text, $3::date, 1, $4::integer where $4::integer <= $5::integer
                on conflict (provider, source, usage_date) do update set
                  requests=provider_usage.requests + 1,
                  units=provider_usage.units + excluded.units
-               where provider_usage.units + excluded.units <= $5
+               where provider_usage.units + excluded.units <= $5::integer
                returning *""",
             provider, source_key, usage_date, units, limit,
         )
@@ -331,24 +418,25 @@ class PostgresRepository:
         row = await self.pool.fetchrow("select * from provider_usage where provider=$1 and source=$2 and usage_date=$3", provider, source_key, usage_date)
         return _usage(row) if row else ProviderUsage(provider=provider, source=None if source_key == "global" else source_key, usage_date=usage_date)
 
-    async def snapshot(self, topic_id: str, *, limit: int = 100, cursor: str | None = None) -> Snapshot:
+    async def snapshot(self, topic_id: str, *, limit: int = 100, cursor: str | None = None, source: SourceName | None = None) -> Snapshot:
         topic = await self.get_topic(topic_id)
-        total_evidence = await self.pool.fetchval("select count(*) from evidence where topic_id=$1", topic_id)
+        source_value = _source_value(source)
+        total_evidence = await self.pool.fetchval("select count(*) from evidence where topic_id=$1 and ($2::text is null or source=$2)", topic_id, source_value)
         source_count_rows = await self.pool.fetch("select source, count(*) as count from evidence where topic_id=$1 group by source", topic_id)
         source_counts = {row["source"]: row["count"] for row in source_count_rows}
         if cursor:
             rows = await self.pool.fetch(
                 """select * from evidence
-                   where topic_id=$1 and (collected_at, id) < (
-                     select collected_at, id from evidence where topic_id=$1 and id=$2
+                   where topic_id=$1 and ($2::text is null or source=$2) and (collected_at, id) < (
+                     select collected_at, id from evidence where topic_id=$1 and id=$3
                    )
-                   order by collected_at desc, id desc limit $3""",
-                topic_id, cursor, limit + 1,
+                   order by collected_at desc, id desc limit $4""",
+                topic_id, source_value, cursor, limit + 1,
             )
         else:
             rows = await self.pool.fetch(
-                """select * from evidence where topic_id=$1
-                   order by collected_at desc, id desc limit $2""", topic_id, limit + 1,
+                """select * from evidence where topic_id=$1 and ($2::text is null or source=$2)
+                   order by collected_at desc, id desc limit $3""", topic_id, source_value, limit + 1,
             )
         has_next_page = len(rows) > limit
         rows = rows[:limit]
@@ -360,8 +448,8 @@ class PostgresRepository:
         evidence_page = [EvidenceItem(**item.model_dump(), analysis=analysis_by_evidence.get(item.id)) for item in evidence]
         sentiment_rows = await self.pool.fetch(
             """select a.label, count(*) as count from analyses a
-               join evidence e on e.id=a.evidence_id where e.topic_id=$1 group by a.label""",
-            topic_id,
+               join evidence e on e.id=a.evidence_id where e.topic_id=$1 and ($2::text is null or e.source=$2) group by a.label""",
+            topic_id, source_value,
         )
         counts = Counter({row["label"]: row["count"] for row in sentiment_rows})
         analyzed_count = sum(counts.values())
@@ -369,8 +457,8 @@ class PostgresRepository:
             """select aspect, count(*) as count from analyses a
                join evidence e on e.id=a.evidence_id
                cross join lateral unnest(a.aspects) as u(aspect)
-               where e.topic_id=$1 group by u.aspect order by count(*) desc, u.aspect limit 10""",
-            topic_id,
+               where e.topic_id=$1 and ($2::text is null or e.source=$2) group by u.aspect order by count(*) desc, u.aspect limit 10""",
+            topic_id, source_value,
         )
         run_rows = await self.pool.fetch("select * from source_runs where topic_id=$1 order by started_at desc limit 50", topic_id)
         runs = [_run(row) for row in run_rows]
@@ -379,6 +467,10 @@ class PostgresRepository:
             latest.setdefault(run.source, run)
         summaries = [SourceSummary(source=source, evidence_count=source_counts.get(source, 0), status=latest[source].status if source in latest else SourceStatus.MISCONFIGURED, last_finished_at=latest[source].finished_at if source in latest else None, updated_at=(latest[source].finished_at or latest[source].started_at) if source in latest else None, message=latest[source].message if source in latest else "Belum ada adapter aktif") for source in SourceName]
         return Snapshot(topic=topic, total_evidence=total_evidence, positive_count=counts.get("positif", 0), negative_count=counts.get("negatif", 0), neutral_count=counts.get("netral", 0), pending_count=counts.get("pending", 0) + max(0, total_evidence - analyzed_count), top_aspects=[row["aspect"] for row in aspect_rows], source_summaries=summaries, evidence=evidence_page, analyses=analyses, source_runs=runs, updated_at=max((item.collected_at for item in evidence), default=None), next_cursor=evidence[-1].id if has_next_page and evidence else None)
+
+
+def _source_value(source: SourceName | str | None) -> str | None:
+    return str(source) if source is not None else None
 
 
 def _topic(row: Any) -> Topic:

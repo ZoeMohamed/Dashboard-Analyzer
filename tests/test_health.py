@@ -8,6 +8,9 @@ def test_health_and_topic_contract() -> None:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
+        assert health.json()["ready"] is True
+        assert set(health.json()["sources"]) == {"tiktok", "instagram", "facebook", "maps", "shopee", "youtube"}
+        assert set(health.json()["sources"].values()) <= {"configured", "not_configured", "inactive"}
         response = client.post("/api/topics", json={"name": "Cappuccino Cincau"})
         assert response.status_code == 201
         topic_id = response.json()["id"]

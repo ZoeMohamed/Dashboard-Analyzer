@@ -146,7 +146,7 @@ def build_providers(settings: Settings) -> tuple[dict[SourceName, SourceAdapterP
         clients.append(apify)
         for source, adapter in APIFY_ADAPTERS.items():
             if source in active:
-                providers[source] = SourceAdapterProvider(adapter(apify), source, "apify")
+                providers[source] = SourceAdapterProvider(adapter(apify, actor_timeout_seconds=settings.apify_actor_timeout_seconds), source, "apify")
     if SourceName.YOUTUBE in active:
         youtube = YouTubeClient(settings.youtube_api_key.get_secret_value()) if settings.youtube_api_key else PublicYouTubeClient()
         clients.append(youtube)

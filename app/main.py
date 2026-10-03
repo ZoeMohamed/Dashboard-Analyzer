@@ -7,13 +7,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, refresh, snapshot, stream, topics
+from app.api import health, insights, refresh, snapshot, stream, topics
 from app.config import get_settings
 from app.database.connection import close_pool, create_pool
 from app.database.repository import InMemoryRepository, PostgresRepository
 from app.services.analysis import IntelligenceService
+from app.services.insights import InsightsService
 from app.services.pipeline import PipelineService
 from app.services.providers import build_providers
+from app.services.scheduler import RefreshScheduler
+from app.services.topics import TopicService
 from app.services.usage import UsageService
 
 
@@ -27,13 +30,20 @@ async def lifespan(application: FastAPI):
     application.state.settings = settings
     application.state.pool = pool
     application.state.repository = repository
-    application.state.pipeline = PipelineService(
-        repository, settings, providers=providers, usage=usage,
-        intelligence=IntelligenceService.from_settings(settings, usage),
-    )
+    intelligence = IntelligenceService.from_settings(settings, usage)
+    pipeline = PipelineService(repository, settings, providers=providers, usage=usage, intelligence=intelligence)
+    application.state.pipeline = pipeline
+    application.state.intelligence = intelligence
+    application.state.topics = TopicService(repository, settings)
+    application.state.insights = InsightsService(repository)
+    scheduler = RefreshScheduler(pipeline, settings)
+    # Started only after every core component exists (docs/SYSTEM.md, startup).
+    if settings.scheduler_enabled:
+        scheduler.start()
     try:
         yield
     finally:
+        await scheduler.stop()
         for client in clients:
             await client.close()
         await close_pool(pool)
@@ -50,5 +60,6 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api")
 app.include_router(topics.router, prefix="/api")
 app.include_router(snapshot.router, prefix="/api")
+app.include_router(insights.router, prefix="/api")
 app.include_router(refresh.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")

@@ -116,8 +116,12 @@ class PipelineService:
         if self.intelligence is None or not items:
             return
         try:
-            missing = await self.repository.missing_analysis_ids(item.id for item in items)
-            analyses = await self.intelligence.analyze([item for item in items if item.id in missing])
+            targets = await self.repository.missing_analysis_ids(item.id for item in items)
+            if getattr(self.intelligence, "gemini", None) is not None:
+                # Results from the local fallback are upgraded once Gemini is
+                # reachable again (the "model needs updating" rule).
+                targets |= await self.repository.fallback_analysis_ids(item.id for item in items)
+            analyses = await self.intelligence.analyze([item for item in items if item.id in targets])
             for analysis in analyses:
                 await self.repository.upsert_analysis(analysis)
         except Exception:
@@ -147,6 +151,6 @@ class PipelineService:
         if not task.cancelled():
             task.exception()  # consume unexpected background failures
 
-    async def snapshot(self, topic_id: str, *, limit: int | None = None, cursor: str | None = None):
+    async def snapshot(self, topic_id: str, *, limit: int | None = None, cursor: str | None = None, source: SourceName | None = None):
         page_limit = min(limit or self.settings.snapshot_evidence_limit, self.settings.snapshot_evidence_limit)
-        return await self.repository.snapshot(topic_id, limit=page_limit, cursor=cursor)
+        return await self.repository.snapshot(topic_id, limit=page_limit, cursor=cursor, source=source)

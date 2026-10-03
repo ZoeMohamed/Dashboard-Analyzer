@@ -65,7 +65,8 @@ class IntelligenceService:
                     for result in await self.gemini.analyze(batch):
                         results[result.id] = (result, AnalyzerName.GEMINI)
                 except Exception as exc:  # budget, quota, and schema failures all fall back locally
-                    logger.warning("Gemini gagal, memakai leksikon lokal: %s", type(exc).__name__)
+                    cause = exc.__cause__ or exc
+                    logger.warning("Gemini gagal, memakai leksikon lokal: %s (%s)", type(exc).__name__, getattr(cause, "code", None) or type(cause).__name__)
                     break
         missing = [pair for pair in pairs if pair[0] not in results]
         for result in await self.fallback.analyze(missing):

@@ -142,3 +142,29 @@ async def test_build_providers_registers_apify_sources_only_with_tokens() -> Non
     assert all(provider.provider_name == "apify" for source, provider in providers.items() if source != SourceName.YOUTUBE)
     for client in [*clients, *more]:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_fallback_analysis_is_upgraded_when_gemini_recovers() -> None:
+    class FlakyGemini:
+        def __init__(self) -> None:
+            self.available = False
+
+        async def analyze(self, pairs):
+            if not self.available:
+                raise RuntimeError("503 UNAVAILABLE")
+            from app.intelligence.base import SentimentResult
+            return [SentimentResult(id=evidence_id, sentiment="positif", score=0.9, topics=["rasa"]) for evidence_id, _ in pairs]
+
+    adapter = FakeAdapter(lambda topic: SourceResult(source="tiktok", raw_count=1, items=[_source_item(topic.id, "1", "cappuccino cincau ini lumayan")]))
+    repository, topic, service = await _service(adapter)
+    gemini = FlakyGemini()
+    service.intelligence.gemini = gemini
+
+    await service.run_source(topic.id, SourceName.TIKTOK)
+    assert (await repository.snapshot(topic.id)).evidence[0].analysis.analyzer == AnalyzerName.LOCAL_FALLBACK
+
+    gemini.available = True
+    await service.run_source(topic.id, SourceName.TIKTOK)
+    analysis = (await repository.snapshot(topic.id)).evidence[0].analysis
+    assert analysis.analyzer == AnalyzerName.GEMINI and analysis.label == "positif"

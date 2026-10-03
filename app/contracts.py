@@ -288,6 +288,105 @@ class Snapshot(ContractModel):
         return self
 
 
+class DailySentiment(ContractModel):
+    day: date
+    positif: int = Field(default=0, ge=0)
+    negatif: int = Field(default=0, ge=0)
+    netral: int = Field(default=0, ge=0)
+
+
+class AspectCount(ContractModel):
+    aspect: str
+    count: int = Field(ge=0)
+    positif: int = Field(default=0, ge=0)
+    negatif: int = Field(default=0, ge=0)
+    netral: int = Field(default=0, ge=0)
+
+
+class EngagementTotals(ContractModel):
+    """Sums over evidence that reported the metric; null when none did."""
+
+    views: int | None = None
+    likes: int | None = None
+    comments: int | None = None
+    shares: int | None = None
+
+
+class SourceInsight(ContractModel):
+    source: SourceName
+    evidence_count: int = Field(default=0, ge=0)
+    sentiment: SentimentCounts = Field(default_factory=SentimentCounts)
+    engagement: EngagementTotals = Field(default_factory=EngagementTotals)
+
+
+class WeeklyCount(ContractModel):
+    week_start: date
+    count: int = Field(ge=0)
+
+
+class ContentMixItem(ContractModel):
+    content_type: str
+    count: int = Field(ge=0)
+    share: float = Field(ge=0, le=1)
+
+
+class VideoInsight(ContractModel):
+    evidence_id: str
+    title: str | None = None
+    url: str
+    content_type: str | None = None
+    published_at: datetime | None = None
+    views: int | None = None
+    views_per_day: float | None = None
+    gain_24h: int | None = None
+
+
+class YouTubeInsights(ContractModel):
+    videos_tracked: int = Field(ge=0)
+    new_videos_30d: int = Field(ge=0)
+    new_videos_prev_30d: int = Field(ge=0)
+    supply_change_pct: float | None = None
+    weekly_new_videos: list[WeeklyCount] = Field(default_factory=list)
+    content_mix: list[ContentMixItem] = Field(default_factory=list)
+    attention_index: float | None = Field(default=None, description="Median views per day of videos at most 30 days old")
+    views_gain_24h: int | None = Field(default=None, description="Null until a view snapshot at least 24 hours old exists")
+    coverage: float = Field(default=0, ge=0, le=1)
+    top_videos: list[VideoInsight] = Field(default_factory=list)
+
+
+class MarketplaceInsights(ContractModel):
+    products: int = Field(ge=0)
+    priced_products: int = Field(ge=0)
+    price_min: int | None = None
+    price_max: int | None = None
+    average_rating: float | None = None
+    total_sold: int | None = None
+
+
+class MapsInsights(ContractModel):
+    places: int = Field(ge=0)
+    average_rating: float | None = None
+    total_reviews: int | None = None
+    product_opinions: int = Field(ge=0)
+
+
+class Insights(ContractModel):
+    """Chart-ready aggregates for one topic, optionally narrowed to one source."""
+
+    topic_id: str
+    source: SourceName | None = None
+    window_days: int = Field(ge=1)
+    total_evidence: int = Field(default=0, ge=0)
+    sentiment: SentimentCounts = Field(default_factory=SentimentCounts)
+    sentiment_daily: list[DailySentiment] = Field(default_factory=list)
+    aspects: list[AspectCount] = Field(default_factory=list)
+    sources: list[SourceInsight] = Field(default_factory=list)
+    youtube: YouTubeInsights | None = None
+    marketplace: MarketplaceInsights | None = None
+    maps: MapsInsights | None = None
+    generated_at: datetime = Field(default_factory=utc_now)
+
+
 class ProviderUsage(ContractModel):
     provider: str
     source: SourceName | None = None

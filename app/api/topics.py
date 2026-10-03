@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import get_repository
 from app.contracts import Topic, TopicCreate, TopicListResponse
 from app.database.repository import InMemoryRepository, PostgresRepository
-from app.errors import TopicNotFoundError
+from app.errors import TopicLimitError, TopicNotFoundError
+from app.services.topics import TopicService
 
 router = APIRouter(tags=["topics"])
 Repository = InMemoryRepository | PostgresRepository
+
+
+def get_topic_service(request: Request) -> TopicService:
+    return request.app.state.topics
 
 
 @router.get("/topics", response_model=TopicListResponse)
@@ -17,8 +22,11 @@ async def list_topics(repository: Repository = Depends(get_repository)) -> Topic
 
 
 @router.post("/topics", response_model=Topic, status_code=status.HTTP_201_CREATED)
-async def create_topic(payload: TopicCreate, repository: Repository = Depends(get_repository)) -> Topic:
-    return await repository.create_topic(payload)
+async def create_topic(payload: TopicCreate, service: TopicService = Depends(get_topic_service)) -> Topic:
+    try:
+        return await service.create(payload)
+    except TopicLimitError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.delete("/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
