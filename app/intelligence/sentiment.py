@@ -20,6 +20,33 @@ TOPICS = (
 )
 NLP_DIR = Path(__file__).parents[1] / "nlp"
 
+# "terlalu X" is a complaint about excess ("terlalu manis", "terlalu mahal"),
+# except with words that are only ever praise ("terlalu enak" = very tasty).
+EXCESS_MARKERS = frozenset({"terlalu", "kelewat", "kebanyakan"})
+ALWAYS_GOOD = frozenset({"enak", "lezat", "nikmat", "mantap", "mantul", "bagus", "keren", "worth"})
+# Clauses are split on punctuation and on these conjunctions so that one
+# aspect's complaint does not cancel another aspect's praise.
+CLAUSE_BREAKS = frozenset({
+    "dan", "serta", "tapi", "tetapi", "namun", "cuma", "hanya", "sayang", "sayangnya",
+    "walaupun", "meskipun", "padahal", "sedangkan",
+})
+DELIVERY_TERMS = frozenset({
+    "pengiriman", "pengirimannya", "kirim", "dikirim", "kiriman", "kurir", "kurirnya",
+    "ongkos", "paket", "paketnya", "ekspedisi", "delivery", "pengantaran", "diantar",
+})
+ASPECT_HINTS = {
+    "mahal": "harga", "murah": "harga", "kemahalan": "harga", "overprice": "harga",
+    "enak": "rasa", "lezat": "rasa", "nikmat": "rasa", "hambar": "rasa", "gurih": "rasa",
+    "asin": "rasa", "pahit": "rasa", "amis": "rasa",
+    "packaging": "kemasan", "bungkus": "kemasan",
+    **{term: "pengiriman" for term in DELIVERY_TERMS},
+    "ramah": "pelayanan", "jutek": "pelayanan", "pelayanannya": "pelayanan",
+}
+# Promotion vocabulary describes an offer, not an opinion; a promo caption
+# without praise or complaint stays neutral (docs/SYSTEM.md section 6).
+PROMO_TERMS = frozenset({"diskon", "promo", "gratis", "cashback", "potongan", "voucher", "bonus", "sale"})
+_CLAUSE_PUNCTUATION = re.compile(r"[,.;:!?\n]+")
+
 
 @lru_cache(maxsize=2)
 def _load_words(filename: str) -> frozenset[str]:
@@ -33,6 +60,22 @@ def _load_words(filename: str) -> frozenset[str]:
 
 def _is_negated(tokens: list[str], index: int) -> bool:
     return any(token in NEGATIONS for token in tokens[max(0, index - 2):index])
+
+
+def _clauses(text: str) -> list[list[str]]:
+    clauses: list[list[str]] = []
+    for segment in _CLAUSE_PUNCTUATION.split(text):
+        current: list[str] = []
+        for token in tokenize(segment):
+            if token in CLAUSE_BREAKS:
+                if current:
+                    clauses.append(current)
+                current = []
+            else:
+                current.append(token)
+        if current:
+            clauses.append(current)
+    return clauses
 
 
 def _topic_present(topic: str, tokens: list[str]) -> bool:
@@ -70,15 +113,42 @@ class LexiconAnalyzer(BaseAnalyzer):
             return SentimentResult(id=comment_id, sentiment="positif", score=0.8, topics=[])
 
         positive = negative = 0
+        for clause in _clauses(text):
+            # A delivery complaint ("pengirimannya lama") describes the courier,
+            # not the product, so it must not flip the product opinion. Its
+            # aspect is still reported below.
+            if DELIVERY_TERMS.intersection(clause):
+                continue
+            clause_positive, clause_negative = self._clause_polarity(clause)
+            positive += clause_positive
+            negative += clause_negative
+        score = (positive - negative) / max(1, positive + negative)
+        sentiment = "positif" if score > 0.2 else "negatif" if score < -0.2 else "netral"
+        hinted = {ASPECT_HINTS[token] for token in tokens if token in ASPECT_HINTS}
+        topics = [topic for topic in TOPICS if topic in hinted or _topic_present(topic, tokens)][:3]
+        return SentimentResult(
+            id=comment_id, sentiment=sentiment, score=score, topics=topics
+        )
+
+    def _clause_polarity(self, tokens: list[str]) -> tuple[int, int]:
+        positive = negative = 0
+        skip_next = False
         for index, token in enumerate(tokens):
+            if skip_next:
+                skip_next = False
+                continue
+            following = tokens[index + 1] if index + 1 < len(tokens) else None
+            if token in EXCESS_MARKERS and following and following not in ALWAYS_GOOD and not _is_negated(tokens, index):
+                # "terlalu manis/mahal/lama" complains about too much of
+                # something, even when the word itself is positive.
+                negative += 1
+                skip_next = True
+                continue
+            if token in PROMO_TERMS:
+                continue
             polarity = 1 if token in self.positive else -1 if token in self.negative else 0
             if polarity and _is_negated(tokens, index):
                 polarity *= -1
             positive += polarity > 0
             negative += polarity < 0
-        score = (positive - negative) / max(1, positive + negative)
-        sentiment = "positif" if score > 0.2 else "negatif" if score < -0.2 else "netral"
-        topics = [topic for topic in TOPICS if _topic_present(topic, tokens)][:3]
-        return SentimentResult(
-            id=comment_id, sentiment=sentiment, score=score, topics=topics
-        )
+        return positive, negative

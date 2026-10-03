@@ -2,11 +2,11 @@
 
 from app.nlp.preprocess import normalize, tokenize
 from app.nlp.keywords import top_keywords, load_stopwords
-from app.analyzer.base import BaseAnalyzer, SentimentResult, AnalyzerError, RateLimitedError
-from app.analyzer.lexicon import LexiconAnalyzer
-from app.analyzer.gemini import GeminiAnalyzer, parse_response, SYSTEM_PROMPT
-from app.analyzer.gemini_pool import GeminiClientPool
-from app.intelligence.relevance import mentions_product, place_relevance
+from app.intelligence.base import BaseAnalyzer, SentimentResult, AnalyzerError, RateLimitedError
+from app.intelligence.sentiment import LexiconAnalyzer
+from app.intelligence.gemini import GeminiAnalyzer, parse_response, SYSTEM_PROMPT
+from app.intelligence.gemini_pool import GeminiClientPool
+from app.intelligence.relevance import is_relevant_evidence, mentions_product, place_relevance
 
 __all__ = [
     "normalize",
@@ -22,6 +22,7 @@ __all__ = [
     "parse_response",
     "SYSTEM_PROMPT",
     "GeminiClientPool",
+    "is_relevant_evidence",
     "mentions_product",
     "place_relevance",
 ]

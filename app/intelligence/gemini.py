@@ -121,7 +121,11 @@ class GeminiAnalyzer(BaseAnalyzer):
     ) -> None:
         self.model = model or getattr(settings, "gemini_model", "gemini-3.1-flash-lite")
         keys = [api_key] if api_key else getattr(settings, "gemini_api_key_values", [])
-        self.pool = GeminiClientPool(keys, client=client)
+        self.pool = GeminiClientPool(
+            keys, client=client,
+            max_attempts=getattr(settings, "gemini_key_max_attempts", None),
+            cooldown_seconds=getattr(settings, "gemini_key_cooldown_seconds", 300),
+        )
 
     @property
     def key_count(self) -> int:
