@@ -300,8 +300,11 @@ class ShopeeAdapter:
 
     name = "shopee"
 
-    def __init__(self, apify_client: Any | None = None) -> None:
+    def __init__(self, apify_client: Any | None = None, *, actor_timeout_seconds: int = 120) -> None:
         self.apify_client = apify_client
+        # Large actor runs (Maps reviews, social search) often need several
+        # minutes; the platform passes APIFY_ACTOR_TIMEOUT_SECONDS here.
+        self.actor_timeout_seconds = actor_timeout_seconds
 
     async def collect(self, topic: Topic, limit: int = 50) -> CollectionResult:
         if not self.apify_client:
@@ -316,7 +319,7 @@ class ShopeeAdapter:
         actor_input = build_shopee_input(topic, limit)
         try:
             run_result = await self.apify_client.run_actor(
-                ACTOR_ID, actor_input, timeout_seconds=120
+                ACTOR_ID, actor_input, timeout_seconds=self.actor_timeout_seconds
             )
             raw_items = run_result.get("items", [])
             evidence_items = parse_shopee_payload(
