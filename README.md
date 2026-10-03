@@ -112,6 +112,22 @@ Alamat lokal yang direncanakan:
 - Health: `http://127.0.0.1:8000/api/health`
 - OpenAPI: `http://127.0.0.1:8000/docs`
 
+### Frontend React
+
+Dashboard frontend berada di folder `web/` dan menggunakan React + TypeScript
+melalui Vite. Jalankan backend terlebih dahulu agar endpoint `/api` tersedia,
+lalu jalankan:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Vite meneruskan request `/api` ke `http://127.0.0.1:8000` selama development.
+Frontend tidak menyimpan atau mengirim credential provider; seluruh akses
+Apify/Gemini tetap berada di backend.
+
 ## Environment variable
 
 Nama minimal yang direncanakan:
