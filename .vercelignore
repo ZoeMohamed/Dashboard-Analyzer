@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.git
+.vercel
+node_modules
+web/node_modules
+web/dist
+tests
+docs
+baseline
+AGENT.md
+railway.json
+*.md

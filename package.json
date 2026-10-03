@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix web ci && npm --prefix web run build && mkdir -p public && cp -R web/dist/. public/"
+  }
+}
