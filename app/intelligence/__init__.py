@@ -6,7 +6,7 @@ from app.analyzer.base import BaseAnalyzer, SentimentResult, AnalyzerError, Rate
 from app.analyzer.lexicon import LexiconAnalyzer
 from app.analyzer.gemini import GeminiAnalyzer, parse_response, SYSTEM_PROMPT
 from app.analyzer.gemini_pool import GeminiClientPool
-from app.maps.relevance import mentions_product, place_relevance
+from app.intelligence.relevance import mentions_product, place_relevance
 
 __all__ = [
     "normalize",
