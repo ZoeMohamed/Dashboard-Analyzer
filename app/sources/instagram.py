@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .apify_client import ApifyError
@@ -129,14 +129,24 @@ def parse_instagram_item(item: dict[str, Any], topic_id: str) -> Evidence | None
 
 
 def parse_instagram_payload(
-    items: list[dict[str, Any]], topic: Topic, limit: int = 50
+    items: list[dict[str, Any]],
+    topic: Topic,
+    limit: int = 50,
+    *,
+    lookback_days: int | None = None,
+    now: datetime | None = None,
 ) -> list[Evidence]:
-    """Parse list of raw Instagram items and return bounded Evidence list."""
+    """Parse list of raw Instagram items and return bounded Evidence list with lookback filtering."""
+    current = now or datetime.now(timezone.utc)
+    cutoff = current - timedelta(days=lookback_days) if lookback_days is not None else None
+
     seen_ids: set[str] = set()
     results: list[Evidence] = []
     for item in items:
         evidence = parse_instagram_item(item, topic.id)
         if evidence and evidence.id not in seen_ids:
+            if cutoff and evidence.published_at and evidence.published_at < cutoff:
+                continue
             seen_ids.add(evidence.id)
             results.append(evidence)
             if len(results) >= limit:
@@ -170,7 +180,9 @@ class InstagramAdapter:
     def __init__(self, apify_client: Any | None = None) -> None:
         self.apify_client = apify_client
 
-    async def collect(self, topic: Topic, limit: int = 50) -> CollectionResult:
+    async def collect(
+        self, topic: Topic, limit: int = 50, *, lookback_days: int = 30
+    ) -> CollectionResult:
         if not self.apify_client:
             return CollectionResult(
                 source="instagram",
@@ -180,13 +192,15 @@ class InstagramAdapter:
                 message="Apify client belum dikonfigurasi.",
             )
 
-        actor_input = build_instagram_input(topic, limit)
+        actor_input = build_instagram_input(topic, limit, lookback_days=lookback_days)
         try:
             run_result = await self.apify_client.run_actor(
                 ACTOR_ID, actor_input, timeout_seconds=120
             )
             raw_items = run_result.get("items", [])
-            evidence_items = parse_instagram_payload(raw_items, topic, limit)
+            evidence_items = parse_instagram_payload(
+                raw_items, topic, limit, lookback_days=lookback_days
+            )
             return CollectionResult(
                 source="instagram",
                 raw_count=len(raw_items),

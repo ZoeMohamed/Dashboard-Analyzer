@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .apify_client import ApifyError
@@ -118,14 +118,24 @@ def parse_tiktok_item(item: dict[str, Any], topic_id: str) -> Evidence | None:
 
 
 def parse_tiktok_payload(
-    items: list[dict[str, Any]], topic: Topic, limit: int = 50
+    items: list[dict[str, Any]],
+    topic: Topic,
+    limit: int = 50,
+    *,
+    lookback_days: int | None = None,
+    now: datetime | None = None,
 ) -> list[Evidence]:
-    """Parse list of raw TikTok items and return bounded Evidence list."""
+    """Parse list of raw TikTok items and return bounded Evidence list with lookback filtering."""
+    current = now or datetime.now(timezone.utc)
+    cutoff = current - timedelta(days=lookback_days) if lookback_days is not None else None
+
     seen_ids: set[str] = set()
     results: list[Evidence] = []
     for item in items:
         evidence = parse_tiktok_item(item, topic.id)
         if evidence and evidence.id not in seen_ids:
+            if cutoff and evidence.published_at and evidence.published_at < cutoff:
+                continue
             seen_ids.add(evidence.id)
             results.append(evidence)
             if len(results) >= limit:
@@ -134,16 +144,29 @@ def parse_tiktok_payload(
 
 
 def build_tiktok_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
-    """Build input dictionary for clockworks~tiktok-scraper actor."""
+    """Build input dictionary for clockworks~tiktok-scraper actor with explicit legacy flags."""
     queries = list(dict.fromkeys([*topic.keywords, *topic.product_terms, topic.name]))
     clean_queries = [q.strip() for q in queries if q and len(q.strip()) >= 2][:3]
     return {
         "searchQueries": clean_queries or [topic.name],
         "searchSection": "/video",
         "resultsPerPage": min(limit, 50),
+        "maxFollowersPerProfile": 0,
+        "maxFollowingPerProfile": 0,
         "commentsPerPost": 0,
+        "topLevelCommentsPerPost": 0,
+        "maxRepliesPerComment": 0,
+        "scrapeRelatedSearchWords": False,
+        "scrapeRelatedVideos": False,
+        "scrapeAdditionalAuthorMeta": False,
         "shouldDownloadVideos": False,
         "shouldDownloadCovers": False,
+        "shouldDownloadSlideshowImages": False,
+        "shouldDownloadAvatars": False,
+        "shouldDownloadMusicCovers": False,
+        "downloadSubtitlesOptions": "NEVER_DOWNLOAD_SUBTITLES",
+        "aiVideoDescription": False,
+        "aiVideoSummary": False,
         "proxyCountryCode": "ID",
     }
 
@@ -156,7 +179,9 @@ class TikTokAdapter:
     def __init__(self, apify_client: Any | None = None) -> None:
         self.apify_client = apify_client
 
-    async def collect(self, topic: Topic, limit: int = 50) -> CollectionResult:
+    async def collect(
+        self, topic: Topic, limit: int = 50, *, lookback_days: int = 30
+    ) -> CollectionResult:
         if not self.apify_client:
             return CollectionResult(
                 source="tiktok",
@@ -172,7 +197,9 @@ class TikTokAdapter:
                 ACTOR_ID, actor_input, timeout_seconds=120
             )
             raw_items = run_result.get("items", [])
-            evidence_items = parse_tiktok_payload(raw_items, topic, limit)
+            evidence_items = parse_tiktok_payload(
+                raw_items, topic, limit, lookback_days=lookback_days
+            )
             return CollectionResult(
                 source="tiktok",
                 raw_count=len(raw_items),
