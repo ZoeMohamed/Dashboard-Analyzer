@@ -25,10 +25,10 @@ class UsageService:
         transaction can be introduced later without changing providers/routes.
         """
         units = max(0, units)
-        current = await self.repository.get_usage(provider, source, self._today())
+        today = self._today()
+        usage_date = date(today.year, today.month, 1) if provider == "gemini" else today
         limit = self.settings.apify_daily_run_limit if provider == "apify" else self.settings.gemini_monthly_analysis_limit
-        if current.units + units > limit:
+        reserved = await self.repository.reserve_usage(provider, source, usage_date, units, limit)
+        if reserved is None:
             raise BudgetExhaustedError(f"Batas penggunaan {provider} tercapai")
-        return await self.repository.record_usage(
-            ProviderUsage(provider=provider, source=source, usage_date=self._today(), requests=1, units=units)
-        )
+        return reserved

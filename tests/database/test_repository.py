@@ -30,3 +30,6 @@ async def test_snapshot_is_bounded() -> None:
     snapshot = await repository.snapshot(topic.id, limit=2)
     assert len(snapshot.evidence) == 2
     assert snapshot.next_cursor
+    next_page = await repository.snapshot(topic.id, limit=2, cursor=snapshot.next_cursor)
+    assert len(next_page.evidence) == 1
+    assert {item.id for item in snapshot.evidence}.isdisjoint(item.id for item in next_page.evidence)

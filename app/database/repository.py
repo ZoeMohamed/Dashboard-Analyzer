@@ -118,6 +118,17 @@ class InMemoryRepository:
             self.usage[key] = current
             return current
 
+    async def reserve_usage(self, provider: str, source: SourceName | None, usage_date: date, units: int, limit: int) -> ProviderUsage | None:
+        source_key = source.value if isinstance(source, SourceName) else (source or "global")
+        key = (provider, source_key, usage_date)
+        async with self._lock:
+            current = self.usage.get(key) or ProviderUsage(provider=provider, source=None if source_key == "global" else source_key, usage_date=usage_date)
+            if current.units + units > limit:
+                return None
+            reserved = current.model_copy(update={"requests": current.requests + 1, "units": current.units + units})
+            self.usage[key] = reserved
+            return reserved
+
     async def get_usage(self, provider: str, source: SourceName | None, usage_date: date) -> ProviderUsage:
         source_key = source.value if isinstance(source, SourceName) else (source or "global")
         value = self.usage.get((provider, source_key, usage_date))
@@ -126,14 +137,19 @@ class InMemoryRepository:
     async def snapshot(self, topic_id: str, *, limit: int = 100, cursor: str | None = None) -> Snapshot:
         topic = await self.get_topic(topic_id)
         values = [item for item in self.evidence.values() if item.topic_id == topic_id]
-        values.sort(key=lambda item: item.collected_at, reverse=True)
-        page = values[:limit]
+        values.sort(key=lambda item: (item.collected_at, item.id or ""), reverse=True)
+        start = 0
+        if cursor:
+            start = next((index + 1 for index, item in enumerate(values) if item.id == cursor), 0)
+        available = values[start:]
+        page = available[:limit]
+        all_analyses = [self.analyses[item.id] for item in values if item.id in self.analyses]
         analyses = [self.analyses[item.id] for item in page if item.id in self.analyses]
         evidence_page = [EvidenceItem(**item.model_dump(), analysis=self.analyses.get(item.id)) for item in page]
         runs = [run for run in self.runs.values() if run.topic_id == topic_id]
         runs.sort(key=lambda item: item.started_at, reverse=True)
-        counts = Counter(item.label for item in analyses)
-        aspects = Counter(aspect for item in analyses for aspect in item.aspects)
+        counts = Counter(item.label for item in all_analyses)
+        aspects = Counter(aspect for item in all_analyses for aspect in item.aspects)
         latest: dict[SourceName, SourceRun] = {}
         for run in runs:
             if run.source not in latest:
@@ -158,14 +174,14 @@ class InMemoryRepository:
             positive_count=counts.get("positif", 0),
             negative_count=counts.get("negatif", 0),
             neutral_count=counts.get("netral", 0),
-            pending_count=max(0, len(page) - len(analyses)),
+            pending_count=counts.get("pending", 0) + max(0, len(values) - len(all_analyses)),
             top_aspects=[name for name, _ in aspects.most_common(10)],
             source_summaries=summaries,
             evidence=evidence_page,
             analyses=analyses,
             source_runs=runs[:20],
             updated_at=max((item.collected_at for item in values), default=None),
-            next_cursor=page[-1].id if len(values) > limit and page else None,
+            next_cursor=page[-1].id if len(available) > limit and page else None,
         )
 
 
@@ -286,6 +302,20 @@ class PostgresRepository:
         )
         return _usage(row)
 
+    async def reserve_usage(self, provider: str, source: SourceName | None, usage_date: date, units: int, limit: int) -> ProviderUsage | None:
+        source_key = source.value if isinstance(source, SourceName) else (source or "global")
+        row = await self.pool.fetchrow(
+            """insert into provider_usage (provider, source, usage_date, requests, units)
+               values ($1,$2,$3,1,$4)
+               on conflict (provider, source, usage_date) do update set
+                 requests=provider_usage.requests + 1,
+                 units=provider_usage.units + excluded.units
+               where provider_usage.units + excluded.units <= $5
+               returning *""",
+            provider, source_key, usage_date, units, limit,
+        )
+        return _usage(row) if row else None
+
     async def get_usage(self, provider: str, source: SourceName | None, usage_date: date) -> ProviderUsage:
         source_key = source.value if isinstance(source, SourceName) else (source or "global")
         row = await self.pool.fetchrow("select * from provider_usage where provider=$1 and source=$2 and usage_date=$3", provider, source_key, usage_date)
@@ -296,24 +326,49 @@ class PostgresRepository:
         total_evidence = await self.pool.fetchval("select count(*) from evidence where topic_id=$1", topic_id)
         source_count_rows = await self.pool.fetch("select source, count(*) as count from evidence where topic_id=$1 group by source", topic_id)
         source_counts = {row["source"]: row["count"] for row in source_count_rows}
-        rows = await self.pool.fetch(
-            """select * from evidence where topic_id=$1 order by collected_at desc limit $2""", topic_id, limit
-        )
+        if cursor:
+            rows = await self.pool.fetch(
+                """select * from evidence
+                   where topic_id=$1 and (collected_at, id) < (
+                     select collected_at, id from evidence where topic_id=$1 and id=$2
+                   )
+                   order by collected_at desc, id desc limit $3""",
+                topic_id, cursor, limit + 1,
+            )
+        else:
+            rows = await self.pool.fetch(
+                """select * from evidence where topic_id=$1
+                   order by collected_at desc, id desc limit $2""", topic_id, limit + 1,
+            )
+        has_next_page = len(rows) > limit
+        rows = rows[:limit]
         evidence = [_evidence(row) for row in rows]
         ids = [item.id for item in evidence]
         analysis_rows = await self.pool.fetch("select * from analyses where evidence_id = any($1::text[])", ids) if ids else []
         analyses = [_analysis(row) for row in analysis_rows]
         analysis_by_evidence = {item.evidence_id: item for item in analyses}
         evidence_page = [EvidenceItem(**item.model_dump(), analysis=analysis_by_evidence.get(item.id)) for item in evidence]
+        sentiment_rows = await self.pool.fetch(
+            """select a.label, count(*) as count from analyses a
+               join evidence e on e.id=a.evidence_id where e.topic_id=$1 group by a.label""",
+            topic_id,
+        )
+        counts = Counter({row["label"]: row["count"] for row in sentiment_rows})
+        analyzed_count = sum(counts.values())
+        aspect_rows = await self.pool.fetch(
+            """select aspect, count(*) as count from analyses a
+               join evidence e on e.id=a.evidence_id
+               cross join lateral unnest(a.aspects) as u(aspect)
+               where e.topic_id=$1 group by u.aspect order by count(*) desc, u.aspect limit 10""",
+            topic_id,
+        )
         run_rows = await self.pool.fetch("select * from source_runs where topic_id=$1 order by started_at desc limit 50", topic_id)
         runs = [_run(row) for row in run_rows]
-        counts = Counter(item.label for item in analyses)
-        aspects = Counter(aspect for item in analyses for aspect in item.aspects)
         latest: dict[SourceName, SourceRun] = {}
         for run in runs:
             latest.setdefault(run.source, run)
         summaries = [SourceSummary(source=source, evidence_count=source_counts.get(source, 0), status=latest[source].status if source in latest else SourceStatus.MISCONFIGURED, last_finished_at=latest[source].finished_at if source in latest else None, updated_at=(latest[source].finished_at or latest[source].started_at) if source in latest else None, message=latest[source].message if source in latest else "Belum ada adapter aktif") for source in SourceName]
-        return Snapshot(topic=topic, total_evidence=total_evidence, positive_count=counts.get("positif", 0), negative_count=counts.get("negatif", 0), neutral_count=counts.get("netral", 0), pending_count=max(0, len(evidence) - len(analyses)), top_aspects=[name for name, _ in aspects.most_common(10)], source_summaries=summaries, evidence=evidence_page, analyses=analyses, source_runs=runs, updated_at=max((item.collected_at for item in evidence), default=None), next_cursor=evidence[-1].id if total_evidence > len(evidence) and evidence else None)
+        return Snapshot(topic=topic, total_evidence=total_evidence, positive_count=counts.get("positif", 0), negative_count=counts.get("negatif", 0), neutral_count=counts.get("netral", 0), pending_count=counts.get("pending", 0) + max(0, total_evidence - analyzed_count), top_aspects=[row["aspect"] for row in aspect_rows], source_summaries=summaries, evidence=evidence_page, analyses=analyses, source_runs=runs, updated_at=max((item.collected_at for item in evidence), default=None), next_cursor=evidence[-1].id if has_next_page and evidence else None)
 
 
 def _topic(row: Any) -> Topic:

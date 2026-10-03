@@ -3,7 +3,9 @@ import pytest
 from app.config import Settings
 from app.contracts import CollectionResult, Evidence, SourceName, TopicCreate, SourceStatus
 from app.database.repository import InMemoryRepository
+from app.errors import BudgetExhaustedError
 from app.services.pipeline import PipelineService
+from app.services.usage import UsageService
 
 
 class FakeProvider:
@@ -26,3 +28,13 @@ async def test_one_source_failure_isolated_and_success_is_idempotent() -> None:
     assert next(run for run in runs if run.source == SourceName.INSTAGRAM).status == SourceStatus.MISCONFIGURED
     await service.run_source(topic.id, SourceName.TIKTOK)
     assert (await repository.snapshot(topic.id)).total_evidence == 1
+
+
+@pytest.mark.asyncio
+async def test_usage_limit_is_reserved_before_provider_call() -> None:
+    repository = InMemoryRepository()
+    settings = Settings(app_env="test", apify_daily_run_limit=1)
+    usage = UsageService(repository, settings)
+    await usage.reserve("apify", SourceName.TIKTOK)
+    with pytest.raises(BudgetExhaustedError):
+        await usage.reserve("apify", SourceName.TIKTOK)

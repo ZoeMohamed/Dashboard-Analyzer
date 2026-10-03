@@ -57,14 +57,11 @@ class PipelineService:
     async def run_source(self, topic_id: str, source: SourceName, *, trigger: RunTrigger = RunTrigger.MANUAL) -> SourceRun:
         topic = await self.repository.get_topic(topic_id)
         lock = self._lock_for(topic_id, source)
-        if lock.locked():
-            run = SourceRun(id=f"run-{uuid4().hex}", topic_id=topic_id, source=source, status=SourceStatus.QUEUED, trigger=trigger, message="Menunggu proses sumber sebelumnya selesai")
-            return await self.repository.upsert_run(run)
-
+        run_id = f"run-{uuid4().hex}"
+        message = "Menunggu proses sumber sebelumnya selesai" if lock.locked() else None
+        run = await self.repository.upsert_run(SourceRun(id=run_id, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, trigger=trigger, message=message))
+        await self._emit(StreamEvent(event=StreamEventName.SOURCE_STATUS, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, run_id=run_id, message=message))
         async with lock:
-            run_id = f"run-{uuid4().hex}"
-            run = await self.repository.upsert_run(SourceRun(id=run_id, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, trigger=trigger))
-            await self._emit(StreamEvent(event=StreamEventName.SOURCE_STATUS, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, run_id=run_id))
             provider = self.providers.get(source)
             if provider is None:
                 return await self._finish(run, SourceStatus.MISCONFIGURED, ErrorCode.NOT_CONFIGURED, "Sumber belum dikonfigurasi")
@@ -111,8 +108,14 @@ class PipelineService:
         job_id = f"job-{uuid4().hex}"
         task = asyncio.create_task(self.refresh(topic_id, request.sources if request else None))
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._task_finished)
         return RefreshResponse(run_id=job_id, status=SourceStatus.QUEUED)
 
-    async def snapshot(self, topic_id: str):
-        return await self.repository.snapshot(topic_id, limit=self.settings.snapshot_evidence_limit)
+    def _task_finished(self, task: asyncio.Task[object]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled():
+            task.exception()  # consume unexpected background failures
+
+    async def snapshot(self, topic_id: str, *, limit: int | None = None, cursor: str | None = None):
+        page_limit = min(limit or self.settings.snapshot_evidence_limit, self.settings.snapshot_evidence_limit)
+        return await self.repository.snapshot(topic_id, limit=page_limit, cursor=cursor)
