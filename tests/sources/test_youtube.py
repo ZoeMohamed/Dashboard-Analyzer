@@ -45,6 +45,7 @@ def test_parse_youtube_fixture(topic: Topic, youtube_fixture: list[dict]) -> Non
     assert first.metrics.likes == 4300
     assert first.metrics.comments == 210
     assert first.metadata.get("views_per_day") is not None
+    assert first.metadata.get("content_type") == "ide_usaha"
 
     second = items[1]
     assert second.id == "youtube:def456UVW"
@@ -52,11 +53,12 @@ def test_parse_youtube_fixture(topic: Topic, youtube_fixture: list[dict]) -> Non
     assert second.metrics is not None
     assert second.metrics.views == 45000
     assert second.metrics.comments is None  # Missing in statistics, stays None
+    assert second.metadata.get("content_type") == "review"
 
 
 import asyncio
 
 def test_youtube_adapter_not_configured(topic: Topic) -> None:
-    adapter = YouTubeAdapter(client=None)
+    adapter = YouTubeAdapter(client=None, auto_fallback=False)
     result = asyncio.run(adapter.collect(topic))
     assert result.error_code == "not_configured"

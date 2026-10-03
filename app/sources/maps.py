@@ -171,9 +171,12 @@ def build_maps_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
     queries = [f"{q} {city}" for q in topic.keywords] if topic.keywords else [f"{topic.name} {city}"]
     return {
         "searchStringsArray": queries[:2],
+        "locationQuery": city,
         "maxCrawledPlacesPerSearch": min(limit, 20),
-        "language": "id",
         "maxReviews": 10,
+        "reviewsSort": "newest",
+        "reviewsOrigin": "google",
+        "language": "id",
         "scrapeReviewerName": True,
     }
 

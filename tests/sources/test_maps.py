@@ -62,6 +62,9 @@ def test_parse_maps_fixture(topic: Topic, maps_fixture: list[dict]) -> None:
 def test_build_maps_input(topic: Topic) -> None:
     inp = build_maps_input(topic, limit=10)
     assert inp["language"] == "id"
+    assert inp["locationQuery"] == "Bandung"
+    assert inp["reviewsSort"] == "newest"
+    assert inp["reviewsOrigin"] == "google"
     assert "seblak Bandung" in inp["searchStringsArray"]
 
 
