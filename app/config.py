@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     apify_key_max_attempts: int = 4
     apify_key_cooldown_seconds: int = 300
 
-    # Gemini configuration
+    gemini_model: str = "gemini-3.8-flash"
     gemini_api_keys: str = ""
     gemini_api_key: str = ""
     gemini_key_max_attempts: int = 4
@@ -26,15 +26,19 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    @property
+    def gemini_api_key_values(self) -> list[str]:
+        import re
+        values = [self.gemini_api_key, *re.split(r"[\s,;]+", self.gemini_api_keys)]
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
     def get_apify_token_pool(self) -> list[str]:
         raw = self.apify_tokens or self.apify_token
         tokens = [t.strip() for t in raw.split(",") if t.strip()]
         return list(dict.fromkeys(tokens))
 
     def get_gemini_key_pool(self) -> list[str]:
-        raw = self.gemini_api_keys or self.gemini_api_key
-        keys = [k.strip() for k in raw.split(",") if k.strip()]
-        return list(dict.fromkeys(keys))
+        return self.gemini_api_key_values
 
 
 @lru_cache
