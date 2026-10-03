@@ -71,11 +71,17 @@ def test_parse_shopee_fixture(topic: Topic, shopee_fixture: list[dict]) -> None:
 
 def test_build_shopee_input(topic: Topic) -> None:
     inp = build_shopee_input(topic, limit=20)
-    assert inp["country"] == "ID"
-    assert inp["keyword"] == "seblak"
-    assert inp["limit"] == 20
-    assert inp["mode"] == "keyword"
-    assert inp["sortBy"] == "relevancy"
+    # Must match the xtracto~shopee-scraper input schema exactly; the actor
+    # rejects unknown fields and uppercase country codes with HTTP 400.
+    assert inp == {
+        "mode": "keyword",
+        "keyword": "seblak",
+        "country": "id",
+        "sort": "relevancy",
+        "maxProducts": 20,
+        "fetchDetail": False,
+        "delay": 0.5,
+    }
 
 
 def test_shopee_adapter_not_configured(topic: Topic) -> None:
@@ -186,3 +192,8 @@ def test_shopee_adapter_preserves_error_code(topic: Topic) -> None:
     result = asyncio.run(adapter.collect(topic))
     assert result.error_code == "provider_permission"
     assert "Token access denied" in (result.message or "")
+
+
+def test_shopee_titles_are_html_unescaped(topic: Topic) -> None:
+    [item] = parse_shopee_payload([{"itemid": "1", "title": "Seblak Kering (ASIN &amp; GURIH)", "url": "https://shopee.co.id/x"}], topic)
+    assert item.title == "Seblak Kering (ASIN & GURIH)"

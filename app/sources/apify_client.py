@@ -173,7 +173,13 @@ class ApifyClient:
                 last_error = ApifyError("provider_error", f"Apify server error (HTTP {start_resp.status_code}).")
                 continue
             elif start_resp.status_code >= 400:
-                last_error = ApifyError("invalid_payload", f"Apify merespons status {start_resp.status_code}.")
+                # Apify explains rejected input (for example an enum value the
+                # actor schema does not allow); keep that reason for the run log.
+                try:
+                    detail = str(start_resp.json().get("error", {}).get("message") or "")[:300]
+                except ValueError:
+                    detail = ""
+                last_error = ApifyError("invalid_payload", f"Apify merespons status {start_resp.status_code}." + (f" {detail}" if detail else ""))
                 raise last_error
 
             start_data = start_resp.json().get("data", {})

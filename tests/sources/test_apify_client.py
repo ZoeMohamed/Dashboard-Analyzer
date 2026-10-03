@@ -256,3 +256,19 @@ def test_apify_malformed_response() -> None:
         await client.close()
 
     asyncio.run(_runner())
+
+
+def test_apify_invalid_input_keeps_apify_reason() -> None:
+    async def _runner() -> None:
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, json={"error": {"type": "invalid-input", "message": "Input is not valid: Field input.country must be equal to one of the allowed values"}})
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
+        client = ApifyClient(tokens=["mock_token"], http_client=http_client)
+        with pytest.raises(ApifyError) as exc_info:
+            await client.run_actor("any-actor", {})
+        assert exc_info.value.code == "invalid_payload"
+        assert "input.country" in exc_info.value.message
+        await client.close()
+
+    asyncio.run(_runner())

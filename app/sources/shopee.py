@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import logging
 import re
 from datetime import datetime, timezone
@@ -193,11 +194,12 @@ def _product_is_relevant(haystack: str, topic: Topic) -> bool:
 
 def parse_shopee_item(item: dict[str, Any], topic: Topic, *, query: str = "") -> Evidence | None:
     """Parse a single Shopee marketplace item into Evidence with legacy ID aliases and metadata."""
-    title = _clean_str(_first(item, "title", "name", "productName", "product_name", "itemName"))
+    # The actor returns HTML-escaped text ("ASIN &amp; GURIH").
+    title = _clean_str(html.unescape(str(_first(item, "title", "name", "productName", "product_name", "itemName") or "")))
     if not title:
         return None
 
-    description = _clean_str(_first(item, "description", "desc", "productDescription"))
+    description = _clean_str(html.unescape(str(_first(item, "description", "desc", "productDescription") or "")))
     category = _clean_str(_first(item, "category", "categoryName"))
     url = _clean_str(_first(item, "url", "productUrl", "product_url", "itemUrl", "link"))
 
@@ -284,12 +286,15 @@ def query_for(topic: Topic) -> str:
 def build_shopee_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
     """Build input dictionary for xtracto~shopee-scraper actor matching legacy semantics."""
     query = query_for(topic)
+    # Field names and enum values follow the actor's published input schema:
+    # country is lowercase ("ID" is rejected with HTTP 400), the result cap is
+    # maxProducts, and ordering is "sort". Unknown fields are not accepted.
     return {
-        "keyword": query,
-        "limit": min(limit, 50),
-        "country": "ID",
-        "sortBy": "relevancy",
         "mode": "keyword",
+        "keyword": query,
+        "country": "id",
+        "sort": "relevancy",
+        "maxProducts": max(1, min(limit, 50)),
         "fetchDetail": False,
         "delay": 0.5,
     }
