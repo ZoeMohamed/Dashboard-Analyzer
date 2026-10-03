@@ -1,0 +1,38 @@
+[
+  {
+    "id": "abc123XYZ",
+    "snippet": {
+      "title": "RESEP SEBLAK PRASMANAN KUAH KENTAL PEDAS GURIH IDE JUALAN UMKM",
+      "description": "Video lengkap resep seblak prasmanan bumbu kencur pedas...",
+      "channelTitle": "Dapur Masak Nusantara",
+      "publishedAt": "2026-09-25T08:00:00Z"
+    },
+    "statistics": {
+      "viewCount": "125000",
+      "likeCount": "4300",
+      "commentCount": "210"
+    }
+  },
+  {
+    "id": "def456UVW",
+    "snippet": {
+      "title": "Review Seblak Terpedas di Kota Bandung - Habis Berapa Porsi?",
+      "description": "Review kuliner seblak pedas khas Bandung...",
+      "channelTitle": "Food Hunter ID",
+      "publishedAt": "2026-09-20T11:30:00Z"
+    },
+    "statistics": {
+      "viewCount": "45000",
+      "likeCount": "1200"
+    }
+  },
+  {
+    "id": "ghi789RST",
+    "snippet": {
+      "title": "Kartun Animasi Anak Episode 12 Petualangan Hutan",
+      "description": "Cerita kartun petualangan anak...",
+      "channelTitle": "Kartun Seru",
+      "publishedAt": "2026-09-15T07:00:00Z"
+    }
+  }
+]

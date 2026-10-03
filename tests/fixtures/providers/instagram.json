@@ -1,0 +1,23 @@
+[
+  {
+    "id": "3198273645123456789",
+    "shortCode": "Cx12345ABCD",
+    "caption": "Pencinta seblak wajib mampir ke kedai seblak jeletet ini. Enak dan gurih!",
+    "url": "https://www.instagram.com/p/Cx12345ABCD/",
+    "timestamp": "2026-09-29T10:30:00Z",
+    "ownerUsername": "foodies_nusantara",
+    "videoPlayCount": 15000,
+    "likesCount": 1250,
+    "commentsCount": 42
+  },
+  {
+    "pk": "3198273645999999999",
+    "shortcode": "Cx99999XYZW",
+    "captionText": "Promo seblak komplit diskon 20% pekan ini.",
+    "takenAt": 1727600000,
+    "owner": {
+      "username": "kedai_seblak_official"
+    },
+    "likes": 320
+  }
+]
