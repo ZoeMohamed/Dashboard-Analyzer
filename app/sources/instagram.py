@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from .apify_client import ApifyError
 from .base import CollectionResult, Evidence, EvidenceMetrics, SourceAdapter, Topic
 
 logger = logging.getLogger(__name__)
@@ -49,11 +50,17 @@ def _parse_datetime(val: Any, fallback: datetime | None = None) -> datetime:
 
 
 def parse_instagram_item(item: dict[str, Any], topic_id: str) -> Evidence | None:
-    """Parse a single Instagram item from apify~instagram-scraper payload into Evidence."""
+    """Parse a single Instagram item from apify~instagram-scraper payload into Evidence.
+    
+    Skips items without valid text/caption to prevent fake content.
+    """
     external_id = _clean_str(
         item.get("id") or item.get("pk") or item.get("shortCode") or item.get("shortcode")
     )
-    if not external_id:
+    text = _clean_str(item.get("caption") or item.get("captionText") or item.get("text"))
+
+    # Rule 10: If text is missing or empty, skip item! Do not create fake evidence.
+    if not external_id or not text:
         return None
 
     owner = item.get("owner") or item.get("ownerMeta") or {}
@@ -65,15 +72,16 @@ def parse_instagram_item(item: dict[str, Any], topic_id: str) -> Evidence | None
     if not owner_username:
         owner_username = _clean_str(item.get("ownerUsername") or item.get("username"))
 
-    text = _clean_str(item.get("caption") or item.get("captionText") or item.get("text"))
     shortcode = _clean_str(item.get("shortCode") or item.get("shortcode"))
     url = _clean_str(item.get("url"))
     if not url and shortcode:
         url = f"https://www.instagram.com/p/{shortcode}/"
 
-    title = owner_username or (f"Instagram Post {external_id}")
-    if not text and not title:
-        return None
+    author_url = _clean_str(owner.get("profileUrl")) if isinstance(owner, dict) else None
+    if not author_url and owner_username:
+        author_url = f"https://www.instagram.com/{owner_username}/"
+
+    title = f"Instagram post oleh {owner_username}" if owner_username else f"Instagram post {external_id}"
 
     published_raw = item.get("timestamp") or item.get("takenAt") or item.get("taken_at_timestamp")
     published_at = _parse_datetime(published_raw)
@@ -98,11 +106,12 @@ def parse_instagram_item(item: dict[str, Any], topic_id: str) -> Evidence | None
         else None
     )
 
-    metadata: dict[str, Any] = {}
-    if shortcode:
-        metadata["shortcode"] = shortcode
-    if owner_username:
-        metadata["owner_username"] = owner_username
+    metadata: dict[str, Any] = {
+        "shortcode": shortcode,
+        "owner_username": owner_username,
+        "author_url": author_url,
+        "query": _clean_str(item.get("sourceHashtag") or item.get("search")),
+    }
 
     return Evidence(
         id=f"instagram:{external_id}",
@@ -135,8 +144,8 @@ def parse_instagram_payload(
     return results
 
 
-def build_instagram_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
-    """Build input dictionary for apify~instagram-scraper actor."""
+def build_instagram_input(topic: Topic, limit: int = 50, lookback_days: int = 30) -> dict[str, Any]:
+    """Build input dictionary for apify~instagram-scraper actor with legacy semantics."""
     queries = list(dict.fromkeys([*topic.keywords, *topic.product_terms, topic.name]))
     tags: list[str] = []
     for q in queries:
@@ -148,7 +157,8 @@ def build_instagram_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
         "resultsType": "posts",
         "directUrls": tags[:3] or [f"https://www.instagram.com/explore/tags/{topic.id}/"],
         "resultsLimit": min(limit, 50),
-        "addParentData": False,
+        "onlyPostsNewerThan": f"{max(1, lookback_days)} days",
+        "addParentData": True,
     }
 
 
@@ -182,6 +192,15 @@ class InstagramAdapter:
                 raw_count=len(raw_items),
                 items=evidence_items,
                 provider_run_id=run_result.get("run_id"),
+            )
+        except ApifyError as exc:
+            logger.error("Instagram collection failed (ApifyError): %s", exc.message)
+            return CollectionResult(
+                source="instagram",
+                raw_count=0,
+                items=[],
+                error_code=exc.code,
+                message=exc.message,
             )
         except Exception as exc:
             logger.error("Instagram collection failed: %s", exc)

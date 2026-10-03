@@ -1,13 +1,16 @@
 """Test TikTok adapter and payload parsing."""
 
+import asyncio
 import json
 from pathlib import Path
 import pytest
 
+from app.sources.apify_client import ApifyError
 from app.sources.base import Topic
 from app.sources.tiktok import (
     TikTokAdapter,
     build_tiktok_input,
+    parse_tiktok_item,
     parse_tiktok_payload,
 )
 
@@ -61,10 +64,87 @@ def test_build_tiktok_input(topic: Topic) -> None:
     assert inp["shouldDownloadVideos"] is False
 
 
-import asyncio
-
 def test_tiktok_adapter_not_configured(topic: Topic) -> None:
     adapter = TikTokAdapter(apify_client=None)
     result = asyncio.run(adapter.collect(topic))
     assert result.error_code == "not_configured"
     assert result.items == []
+
+
+# ==================== GROUP E: TIKTOK REGRESSION TESTS ====================
+
+def test_tiktok_missing_text_skipped(topic: Topic) -> None:
+    """Rule 10: Items with missing or empty text MUST be skipped. No fake titles from author."""
+    item_no_text = {
+        "id": "tt_no_text",
+        "authorMeta": {"name": "Influencer Hebat", "uniqueId": "influencer123"},
+        "text": "",
+    }
+    assert parse_tiktok_item(item_no_text, topic.id) is None
+
+    item_none_text = {
+        "id": "tt_none_text",
+        "authorMeta": {"name": "Influencer Hebat", "uniqueId": "influencer123"},
+        "text": None,
+    }
+    assert parse_tiktok_item(item_none_text, topic.id) is None
+
+
+def test_tiktok_missing_author(topic: Topic) -> None:
+    """Rule 10: Missing author should not cause error when text is valid."""
+    item = {
+        "id": "tt_no_author",
+        "text": "Seblak prasmanan murah meriah",
+    }
+    ev = parse_tiktok_item(item, topic.id)
+    assert ev is not None
+    assert ev.external_id == "tt_no_author"
+    assert ev.metadata["author_name"] is None
+
+
+def test_tiktok_missing_metrics(topic: Topic) -> None:
+    """Rule 10: Missing metrics should remain None, no fabricated 0s."""
+    item = {
+        "id": "tt_no_metrics",
+        "text": "Seblak enak banget",
+    }
+    ev = parse_tiktok_item(item, topic.id)
+    assert ev is not None
+    assert ev.metrics is None
+
+
+def test_tiktok_missing_timestamp(topic: Topic) -> None:
+    """Rule 10: Missing timestamp handled without crashing."""
+    item = {
+        "id": "tt_no_time",
+        "text": "Seblak enak banget",
+    }
+    ev = parse_tiktok_item(item, topic.id)
+    assert ev is not None
+    assert ev.published_at is not None
+
+
+def test_tiktok_stable_external_id_and_url(topic: Topic) -> None:
+    """Rule 10: Stable external ID and normalized video URL."""
+    item = {
+        "videoId": "888877776666",
+        "text": "Resep seblak ceker",
+        "authorMeta": {"uniqueId": "chefindo"},
+    }
+    ev = parse_tiktok_item(item, topic.id)
+    assert ev is not None
+    assert ev.external_id == "888877776666"
+    assert ev.id == "tiktok:888877776666"
+    assert ev.url == "https://www.tiktok.com/@chefindo/video/888877776666"
+
+
+def test_tiktok_adapter_preserves_error_code(topic: Topic) -> None:
+    """Rule 2: TikTokAdapter must preserve original Apify error code."""
+    class MockApifyClient:
+        async def run_actor(self, *args, **kwargs):
+            raise ApifyError("provider_timeout", "Actor timed out")
+
+    adapter = TikTokAdapter(apify_client=MockApifyClient())
+    result = asyncio.run(adapter.collect(topic))
+    assert result.error_code == "provider_timeout"
+    assert "Actor timed out" in (result.message or "")

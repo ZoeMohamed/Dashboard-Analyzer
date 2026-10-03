@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from .apify_client import ApifyError
 from .base import CollectionResult, Evidence, EvidenceMetrics, SourceAdapter, Topic
 
 logger = logging.getLogger(__name__)
@@ -49,32 +50,61 @@ def _parse_datetime(val: Any, fallback: datetime | None = None) -> datetime:
 
 
 def parse_facebook_item(item: dict[str, Any], topic_id: str) -> Evidence | None:
-    """Parse a single Facebook public post item into Evidence."""
-    external_id = _clean_str(item.get("id") or item.get("postId"))
-    if not external_id:
+    """Parse a single Facebook public post item into Evidence.
+    
+    Skips items without valid text/content to prevent fake evidence.
+    """
+    external_id = _clean_str(
+        item.get("postId") or item.get("post_id") or item.get("id") or item.get("legacyId")
+    )
+    text = _clean_str(item.get("text") or item.get("postText") or item.get("message") or item.get("description"))
+
+    # Rule 10: If text is missing or empty, skip item! Do not create fake evidence.
+    if not external_id or not text:
         return None
 
+    author = (
+        item.get("user")
+        or item.get("author")
+        or item.get("owner")
+        or item.get("page")
+        or item.get("pageName")
+        or {}
+    )
+    page_name = item.get("pageName")
+    page_label = page_name.get("name") if isinstance(page_name, dict) else page_name
     author_name = _clean_str(
         item.get("authorName")
-        or item.get("pageName")
-        or (item.get("user") or {}).get("name")
-        or (item.get("author") or {}).get("name")
+        or item.get("userName")
+        or page_label
+        or (author.get("name") if isinstance(author, dict) else None)
+        or (author.get("username") if isinstance(author, dict) else None)
     )
 
-    text = _clean_str(item.get("text") or item.get("message") or item.get("postText"))
-    url = _clean_str(item.get("url") or item.get("postUrl"))
+    url = _clean_str(item.get("url") or item.get("postUrl") or item.get("post_url"))
+    author_url = (
+        _clean_str(item.get("authorUrl") or author.get("url") or author.get("profileUrl"))
+        if isinstance(author, dict)
+        else None
+    )
+    if not author_url and isinstance(author, dict) and author.get("id"):
+        author_url = f"https://www.facebook.com/{author.get('id')}"
 
-    title = author_name or (f"Facebook Post {external_id}")
-    if not text and not title:
-        return None
+    title = f"Facebook post oleh {author_name}" if author_name else f"Facebook post {external_id}"
 
-    published_raw = item.get("time") or item.get("date") or item.get("timestamp")
+    published_raw = (
+        item.get("publishedAt")
+        or item.get("published_at")
+        or item.get("time")
+        or item.get("date")
+        or item.get("timestamp")
+    )
     published_at = _parse_datetime(published_raw)
 
-    views = _clean_int(item.get("views") or item.get("viewCount"))
-    likes = _clean_int(item.get("likes") or item.get("likesCount") or item.get("reactions"))
-    comments = _clean_int(item.get("comments") or item.get("commentsCount"))
-    shares = _clean_int(item.get("shares") or item.get("sharesCount"))
+    views = _clean_int(item.get("views") or item.get("videoViews") or item.get("viewCount"))
+    likes = _clean_int(item.get("likes") or item.get("likesCount") or item.get("reactions") or item.get("reactionCount"))
+    comments = _clean_int(item.get("comments") or item.get("commentsCount") or item.get("commentCount"))
+    shares = _clean_int(item.get("shares") or item.get("sharesCount") or item.get("shareCount"))
 
     has_metrics = any(v is not None for v in (views, likes, comments, shares))
     metrics = (
@@ -83,9 +113,11 @@ def parse_facebook_item(item: dict[str, Any], topic_id: str) -> Evidence | None:
         else None
     )
 
-    metadata: dict[str, Any] = {}
-    if author_name:
-        metadata["author_name"] = author_name
+    metadata: dict[str, Any] = {
+        "author_name": author_name,
+        "author_url": author_url,
+        "query": _clean_str(item.get("searchQuery") or item.get("query") or item.get("category")),
+    }
 
     return Evidence(
         id=f"facebook:{external_id}",
@@ -160,6 +192,15 @@ class FacebookAdapter:
                 raw_count=len(raw_items),
                 items=evidence_items,
                 provider_run_id=run_result.get("run_id"),
+            )
+        except ApifyError as exc:
+            logger.error("Facebook collection failed (ApifyError): %s", exc.message)
+            return CollectionResult(
+                source="facebook",
+                raw_count=0,
+                items=[],
+                error_code=exc.code,
+                message=exc.message,
             )
         except Exception as exc:
             logger.error("Facebook collection failed: %s", exc)

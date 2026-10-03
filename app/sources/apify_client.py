@@ -168,6 +168,9 @@ class ApifyClient:
                 self._mark_quarantine(token)
                 last_error = ApifyError("provider_permission", f"Izin token Apify ditolak (HTTP {start_resp.status_code}).")
                 continue
+            elif start_resp.status_code >= 500:
+                last_error = ApifyError("provider_error", f"Apify server error (HTTP {start_resp.status_code}).")
+                continue
             elif start_resp.status_code >= 400:
                 last_error = ApifyError("invalid_payload", f"Apify merespons status {start_resp.status_code}.")
                 raise last_error
@@ -186,15 +189,31 @@ class ApifyClient:
             while run_status not in TERMINAL_STATUSES:
                 now_poll = datetime.now(timezone.utc).timestamp()
                 if (now_poll - start_poll) > timeout_seconds:
-                    raise ApifyError("provider_timeout", f"Polling actor run {run_id} melebihi batas {timeout_seconds} detik.")
+                    await self.abort_run(run_id, token)
+                    raise ApifyError(
+                        "provider_timeout",
+                        f"Polling actor run {run_id} melebihi batas {timeout_seconds} detik.",
+                    )
 
                 await asyncio.sleep(self.poll_interval)
                 try:
                     poll_resp = await client.get(status_url, headers=headers)
                     if poll_resp.status_code == 200:
-                        run_status = poll_resp.json().get("data", {}).get("status", "RUNNING")
+                        poll_data = poll_resp.json().get("data", {})
+                        run_status = poll_data.get("status", "RUNNING")
                         if not dataset_id:
-                            dataset_id = poll_resp.json().get("data", {}).get("defaultDatasetId")
+                            dataset_id = poll_data.get("defaultDatasetId")
+                    elif poll_resp.status_code in (401, 403):
+                        self._mark_quarantine(token)
+                        raise ApifyError(
+                            "provider_permission",
+                            f"Izin token Apify ditolak saat polling (HTTP {poll_resp.status_code}).",
+                        )
+                    elif poll_resp.status_code == 429:
+                        self._mark_cooldown(token)
+                        raise ApifyError("budget_exhausted", "Apify rate limit saat polling (HTTP 429).")
+                except ApifyError:
+                    raise
                 except Exception:
                     # Ignore transient polling network drops
                     pass
@@ -203,11 +222,47 @@ class ApifyClient:
                 raise ApifyError("provider_error", f"Actor run {run_id} selesai dengan status '{run_status}'.")
 
             # 3. Fetch dataset items
-            dataset_url = f"{APIFY_API_ROOT}/datasets/{dataset_id}/items?limit={limit}"
-            items_resp = await client.get(dataset_url, headers=headers)
-            items = items_resp.json() if items_resp.status_code == 200 else []
-            if not isinstance(items, list):
-                items = []
+            if not dataset_id:
+                raise ApifyError("provider_error", f"Actor run {run_id} tidak memiliki defaultDatasetId.")
+
+            dataset_url = f"{APIFY_API_ROOT}/datasets/{dataset_id}/items"
+            try:
+                items_resp = await client.get(
+                    dataset_url,
+                    headers=headers,
+                    params={"clean": "true", "format": "json", "limit": limit},
+                )
+            except httpx.TimeoutException:
+                raise ApifyError("provider_timeout", f"Timeout saat mengambil dataset {dataset_id}.")
+            except Exception as exc:
+                raise ApifyError("provider_error", f"Network error saat mengambil dataset {dataset_id}: {exc}")
+
+            if items_resp.status_code in (401, 403):
+                self._mark_quarantine(token)
+                raise ApifyError(
+                    "provider_permission",
+                    f"Izin token Apify ditolak saat mengambil dataset (HTTP {items_resp.status_code}).",
+                )
+            if items_resp.status_code == 429:
+                self._mark_cooldown(token)
+                raise ApifyError("budget_exhausted", "Apify rate limit saat mengambil dataset (HTTP 429).")
+            if items_resp.status_code >= 400:
+                raise ApifyError(
+                    "provider_error",
+                    f"Gagal mengambil dataset {dataset_id}: HTTP {items_resp.status_code}",
+                )
+
+            try:
+                items_json = items_resp.json()
+            except Exception as exc:
+                raise ApifyError("invalid_payload", f"Respons dataset bukan JSON valid: {exc}")
+
+            if isinstance(items_json, list):
+                items = [item for item in items_json if isinstance(item, dict)]
+            elif isinstance(items_json, dict) and isinstance(items_json.get("data"), list):
+                items = [item for item in items_json["data"] if isinstance(item, dict)]
+            else:
+                raise ApifyError("invalid_payload", "Dataset items bukan berupa JSON list.")
 
             return {
                 "run_id": run_id,
@@ -218,3 +273,17 @@ class ApifyClient:
         if last_error:
             raise last_error
         raise ApifyError("provider_error", "Gagal mengeksekusi Actor Apify setelah batas percobaan.")
+
+    async def abort_run(self, run_id: str, token: str | None = None) -> None:
+        """Abort an active actor run using POST /actor-runs/{run_id}/abort."""
+        tok = token or (self.tokens[0] if self.tokens else None)
+        if not tok:
+            return
+        client = self._get_client()
+        url = f"{APIFY_API_ROOT}/actor-runs/{run_id}/abort"
+        headers = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+        try:
+            await client.post(url, headers=headers)
+        except Exception:
+            logger.warning("Gagal meng-abort actor run %s", run_id)
+

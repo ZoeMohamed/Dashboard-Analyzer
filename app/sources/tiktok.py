@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from .apify_client import ApifyError
 from .base import CollectionResult, Evidence, EvidenceMetrics, SourceAdapter, Topic
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,6 @@ def _parse_datetime(val: Any, fallback: datetime | None = None) -> datetime:
     if isinstance(val, datetime):
         dt = val
     elif isinstance(val, (int, float)):
-        # Handle unix timestamp in seconds or milliseconds
         ts = val / 1000 if val > 1e11 else val
         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
     elif isinstance(val, str) and val.strip():
@@ -50,28 +50,35 @@ def _parse_datetime(val: Any, fallback: datetime | None = None) -> datetime:
 
 
 def parse_tiktok_item(item: dict[str, Any], topic_id: str) -> Evidence | None:
-    """Parse a single TikTok item from clockworks~tiktok-scraper payload into Evidence."""
+    """Parse a single TikTok item from clockworks~tiktok-scraper payload into Evidence.
+    
+    Skips items without valid text/caption to prevent fake content.
+    """
     external_id = _clean_str(item.get("id") or item.get("videoId"))
-    if not external_id:
+    text = _clean_str(item.get("text") or item.get("desc") or item.get("description"))
+
+    # Rule 10: If text is missing or empty, skip item! Do not create fake evidence.
+    if not external_id or not text:
         return None
 
     author_meta = item.get("authorMeta") or item.get("author") or {}
     author_name = None
     author_unique_id = None
+    author_url = None
     if isinstance(author_meta, dict):
         author_name = _clean_str(
             author_meta.get("nickName") or author_meta.get("name") or author_meta.get("uniqueId")
         )
         author_unique_id = _clean_str(author_meta.get("uniqueId"))
+        author_url = _clean_str(author_meta.get("profileUrl"))
 
-    text = _clean_str(item.get("text") or item.get("desc") or item.get("description"))
     url = _clean_str(item.get("webVideoUrl") or item.get("videoUrl"))
     if not url and author_unique_id:
         url = f"https://www.tiktok.com/@{author_unique_id}/video/{external_id}"
+    if not author_url and author_unique_id:
+        author_url = f"https://www.tiktok.com/@{author_unique_id}"
 
-    title = author_name or (f"TikTok Video {external_id}")
-    if not text and not title:
-        return None
+    title = f"TikTok post oleh {author_name}" if author_name else f"TikTok video {external_id}"
 
     published_raw = item.get("createTimeISO") or item.get("createTime")
     published_at = _parse_datetime(published_raw)
@@ -88,9 +95,12 @@ def parse_tiktok_item(item: dict[str, Any], topic_id: str) -> Evidence | None:
         else None
     )
 
-    metadata: dict[str, Any] = {}
-    if author_unique_id:
-        metadata["author_unique_id"] = author_unique_id
+    metadata: dict[str, Any] = {
+        "author_name": author_name,
+        "author_unique_id": author_unique_id,
+        "author_url": author_url,
+        "query": _clean_str(item.get("searchQuery")),
+    }
 
     return Evidence(
         id=f"tiktok:{external_id}",
@@ -168,6 +178,15 @@ class TikTokAdapter:
                 raw_count=len(raw_items),
                 items=evidence_items,
                 provider_run_id=run_result.get("run_id"),
+            )
+        except ApifyError as exc:
+            logger.error("TikTok collection failed (ApifyError): %s", exc.message)
+            return CollectionResult(
+                source="tiktok",
+                raw_count=0,
+                items=[],
+                error_code=exc.code,
+                message=exc.message,
             )
         except Exception as exc:
             logger.error("TikTok collection failed: %s", exc)

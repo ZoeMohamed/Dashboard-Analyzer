@@ -1,13 +1,16 @@
 """Test Facebook adapter and payload parsing."""
 
+import asyncio
 import json
 from pathlib import Path
 import pytest
 
+from app.sources.apify_client import ApifyError
 from app.sources.base import Topic
 from app.sources.facebook import (
     FacebookAdapter,
     build_facebook_input,
+    parse_facebook_item,
     parse_facebook_payload,
 )
 
@@ -57,9 +60,61 @@ def test_build_facebook_input(topic: Topic) -> None:
     assert inp["locations"] == ["Bandung"]
 
 
-import asyncio
-
 def test_facebook_adapter_not_configured(topic: Topic) -> None:
     adapter = FacebookAdapter(apify_client=None)
     result = asyncio.run(adapter.collect(topic))
     assert result.error_code == "not_configured"
+
+
+# ==================== GROUP E: FACEBOOK REGRESSION TESTS ====================
+
+def test_facebook_missing_text_skipped(topic: Topic) -> None:
+    """Rule 10: Posts without text must be skipped. No fake title from author/page."""
+    item_no_text = {
+        "id": "fb_no_text",
+        "authorName": "Komunitas Kuliner",
+        "text": "",
+    }
+    assert parse_facebook_item(item_no_text, topic.id) is None
+
+    item_none_text = {
+        "id": "fb_none_text",
+        "authorName": "Komunitas Kuliner",
+        "text": None,
+    }
+    assert parse_facebook_item(item_none_text, topic.id) is None
+
+
+def test_facebook_id_aliases(topic: Topic) -> None:
+    """Rule 10: Support postId, post_id, id, and legacyId aliases."""
+    for key in ("postId", "post_id", "id", "legacyId"):
+        item = {
+            key: f"fb_key_{key}",
+            "text": "Info seblak enak di Bandung",
+        }
+        ev = parse_facebook_item(item, topic.id)
+        assert ev is not None
+        assert ev.external_id == f"fb_key_{key}"
+
+
+def test_facebook_missing_metrics(topic: Topic) -> None:
+    """Rule 10: Missing metrics should remain None."""
+    item = {
+        "postId": "fb_meta_1",
+        "text": "Resep seblak ceker pedas",
+    }
+    ev = parse_facebook_item(item, topic.id)
+    assert ev is not None
+    assert ev.metrics is None
+
+
+def test_facebook_adapter_preserves_error_code(topic: Topic) -> None:
+    """Rule 2: FacebookAdapter must preserve original Apify error code."""
+    class MockApifyClient:
+        async def run_actor(self, *args, **kwargs):
+            raise ApifyError("invalid_payload", "Input invalid")
+
+    adapter = FacebookAdapter(apify_client=MockApifyClient())
+    result = asyncio.run(adapter.collect(topic))
+    assert result.error_code == "invalid_payload"
+    assert "Input invalid" in (result.message or "")
