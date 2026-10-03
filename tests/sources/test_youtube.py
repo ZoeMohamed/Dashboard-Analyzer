@@ -9,8 +9,10 @@ import pytest
 
 from app.sources.base import Topic
 from app.sources.youtube import (
+    PublicYouTubeClient,
     YouTubeAdapter,
     YouTubeClient,
+    YouTubeError,
     build_query,
     classify_content_type,
     is_relevant,
@@ -300,6 +302,130 @@ def test_youtube_client_discovery_passes(topic: Topic) -> None:
         # Ensure date and viewCount calls were both made
         assert any("order=date" in c for c in calls)
         assert any("order=viewCount" in c for c in calls)
+
+        await client.close()
+
+    asyncio.run(_runner())
+
+
+def test_public_youtube_search_http_failure_raises_provider_error(topic: Topic) -> None:
+    """Case 1: Public search HTTP 500 on discovery must raise YouTubeError and return provider_error."""
+    async def _runner() -> None:
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, text="Internal Server Error")
+
+        transport = httpx.MockTransport(mock_handler)
+        http_client = httpx.AsyncClient(transport=transport)
+        client = PublicYouTubeClient(client=http_client)
+        adapter = YouTubeAdapter(client=client)
+
+        result = await adapter.collect(topic)
+        assert result.error_code == "provider_error"
+        assert result.items == []
+        assert "500" in (result.message or "")
+
+        await client.close()
+
+    asyncio.run(_runner())
+
+
+def test_public_youtube_search_malformed_html_raises_provider_error(topic: Topic) -> None:
+    """Case 2: Public search HTTP 200 without ytInitialData must return provider_error, not empty result."""
+    async def _runner() -> None:
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text="<html><body>No initial data here</body></html>")
+
+        transport = httpx.MockTransport(mock_handler)
+        http_client = httpx.AsyncClient(transport=transport)
+        client = PublicYouTubeClient(client=http_client)
+        adapter = YouTubeAdapter(client=client)
+
+        result = await adapter.collect(topic)
+        assert result.error_code == "provider_error"
+        assert result.items == []
+        assert "ytInitialData" in (result.message or "")
+
+        await client.close()
+
+    asyncio.run(_runner())
+
+
+def test_public_youtube_one_discovery_pass_failure_raises_provider_error(topic: Topic) -> None:
+    """Case 3: If date discovery returns 500 while popularity is 200, propagate provider_error without partial success."""
+    async def _runner() -> None:
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "sp=CAI%3D" in url_str:
+                return httpx.Response(500, text="Date discovery failed")
+            return httpx.Response(200, text="<html><body>var ytInitialData = {};</body></html>")
+
+        transport = httpx.MockTransport(mock_handler)
+        http_client = httpx.AsyncClient(transport=transport)
+        client = PublicYouTubeClient(client=http_client)
+        adapter = YouTubeAdapter(client=client)
+
+        result = await adapter.collect(topic)
+        assert result.error_code == "provider_error"
+        assert result.items == []
+        assert "date (CAI%3D)" in (result.message or "")
+
+        await client.close()
+
+    asyncio.run(_runner())
+
+
+def test_public_youtube_watch_page_refresh_failure_falls_back_to_candidate(topic: Topic) -> None:
+    """Case 4: Watch-page enrichment failure must NOT fail collection if discovery succeeded."""
+    async def _runner() -> None:
+        html_search = """
+        <html><body><script>
+        var ytInitialData = {
+            "contents": {
+                "twoColumnSearchResultsRenderer": {
+                    "primaryContents": {
+                        "sectionListRenderer": {
+                            "contents": [{
+                                "itemSectionRenderer": {
+                                    "contents": [{
+                                        "videoRenderer": {
+                                            "videoId": "cand_vid_1",
+                                            "title": {"runs": [{"text": "Review Resep Seblak Enak Ide Jualan"}]},
+                                            "ownerText": {"runs": [{"text": "Dapur Seblak"}]},
+                                            "viewCountText": {"simpleText": "10 rb x ditonton"},
+                                            "publishedTimeText": {"simpleText": "2 hari lalu"}
+                                        }
+                                    }]
+                                }
+                            }]
+                        }
+                    }
+                }
+            }
+        };
+        </script></body></html>
+        """
+
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "/results" in url_str:
+                return httpx.Response(200, text=html_search)
+            if "/watch" in url_str:
+                return httpx.Response(500, text="Watch page error")
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(mock_handler)
+        http_client = httpx.AsyncClient(transport=transport)
+        client = PublicYouTubeClient(client=http_client)
+        adapter = YouTubeAdapter(client=client)
+
+        result = await adapter.collect(topic)
+        assert result.error_code is None
+        assert len(result.items) == 1
+        ev = result.items[0]
+        assert ev.external_id == "cand_vid_1"
+        assert "Review Resep Seblak" in (ev.title or "")
+        assert ev.metrics is not None
+        assert ev.metrics.views == 10000
 
         await client.close()
 

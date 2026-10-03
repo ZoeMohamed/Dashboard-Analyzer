@@ -624,16 +624,39 @@ class PublicYouTubeClient:
         seen_ids: set[str] = set()
 
         # Perform discovery pass by date (CAI%3D) and viewCount (CAMSAhAB)
+        pass_labels = {
+            "CAI%3D": "date (CAI%3D)",
+            "CAMSAhAB": "viewCount (CAMSAhAB)",
+        }
         for sort_filter in ("CAI%3D", "CAMSAhAB"):
+            pass_label = pass_labels.get(sort_filter, sort_filter)
             url = f"{WEB_ROOT}/results?search_query={quote_plus(query)}&hl=id&gl=ID&sp={sort_filter}"
             try:
                 resp = await self._client.get(url, headers=headers)
-                if resp.status_code != 200:
-                    continue
+            except Exception as exc:
+                raise YouTubeError(
+                    "provider_error",
+                    f"Public YouTube discovery pass '{pass_label}' request failed: {exc}",
+                ) from exc
+
+            if resp.status_code != 200:
+                raise YouTubeError(
+                    "provider_error",
+                    f"Public YouTube discovery pass '{pass_label}' returned HTTP {resp.status_code}.",
+                )
+
+            try:
                 data = self._initial_data(
                     resp.text,
                     ("var ytInitialData = ", "window['ytInitialData'] = ", "ytInitialData = "),
                 )
+            except Exception as exc:
+                raise YouTubeError(
+                    "provider_error",
+                    f"Public YouTube discovery pass '{pass_label}' failed to parse ytInitialData: {exc}",
+                ) from exc
+
+            try:
                 for node in self._walk(data):
                     vr = node.get("videoRenderer")
                     if not isinstance(vr, dict) or not vr.get("videoId"):
@@ -668,7 +691,10 @@ class PublicYouTubeClient:
                     if len(candidates) >= limit * 2:
                         break
             except Exception as exc:
-                logger.warning("Public YouTube scraper filter %s failed: %s", sort_filter, exc)
+                raise YouTubeError(
+                    "provider_error",
+                    f"Public YouTube discovery pass '{pass_label}' failed while processing items: {exc}",
+                ) from exc
 
             if len(candidates) >= limit * 2:
                 break
