@@ -60,9 +60,9 @@ export function DashboardScreen({
   const [query, setQuery] = useState("");
   const evidence = useMemo(() => {
     if (!snapshot) return [];
-    return snapshot.evidence.filter((item) => source === "summary" || item.source === source);
+    return (snapshot.evidence ?? []).filter((item) => source === "summary" || item.source === source);
   }, [snapshot, source]);
-  const sourceSummary = snapshot?.sources.find((item) => item.source === source);
+  const sourceSummary = snapshot?.sources?.find((item) => item.source === source);
   const sentiment = snapshot?.sentiment ?? { positif: 0, negatif: 0, netral: 0, pending: 0 };
   const filteredEvidence = evidence.filter((item) =>
     `${item.title ?? ""} ${item.text ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())
@@ -87,7 +87,7 @@ export function DashboardScreen({
     {source !== "summary" && sourceSummary && <div className={`source-notice status-${sourceSummary.status}`}><strong>{displayStatus(sourceSummary.status, sourceSummary.last_finished_at)}</strong><span>{statusMessage(sourceSummary.status, sourceSummary.message)}</span></div>}
     <section className="source-overview neo-box">
       <div className="panel-header"><h3>{source === "summary" ? "Status seluruh sumber" : `Evidence ${sourceLabels[source]}`}</h3><input aria-label="Cari evidence" placeholder="Cari evidence..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-      {source === "summary" ? <div className="source-status-grid">{snapshot.sources.map((item) => <div className="source-status-card" key={item.source}><span className={`status-dot status-dot-${item.status}`} /><b>{sourceLabels[item.source]}</b><strong>{item.evidence_count}</strong><small>{displayStatus(item.status, item.last_finished_at)}</small></div>)}</div> : <EvidenceList evidence={filteredEvidence} />}
+      {source === "summary" ? <div className="source-status-grid">{(snapshot.sources ?? []).map((item) => <div className="source-status-card" key={item.source}><span className={`status-dot status-dot-${item.status}`} /><b>{sourceLabels[item.source]}</b><strong>{item.evidence_count}</strong><small>{displayStatus(item.status, item.last_finished_at)}</small></div>)}</div> : <EvidenceList evidence={filteredEvidence} />}
     </section>
     {source === "summary" && <section className="source-overview neo-box evidence-summary"><div className="panel-header"><h3>Evidence terbaru</h3></div><EvidenceList evidence={filteredEvidence.slice(0, 6)} /></section>}
   </Page>;
