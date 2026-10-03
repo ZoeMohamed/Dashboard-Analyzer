@@ -146,6 +146,30 @@ def parse_maps_place_items(
     if any(_contains(place_name, [normalize(term)]) for term in topic.exclude_terms if term.strip()):
         return results
 
+    # Extract raw reviews first to assess review hits
+    raw_reviews = place.get("reviews") or place.get("reviewsData") or []
+    if isinstance(raw_reviews, dict):
+        raw_reviews = [raw_reviews]
+    if not isinstance(raw_reviews, list):
+        raw_reviews = []
+
+    # Relevance check: place is relevant if name mentions product OR any review mentions product
+    signals = _signals(topic)
+    name_hit = _contains(place_name, signals)
+
+    matching_reviews: list[tuple[int, dict[str, Any], str]] = []
+    for idx, rev in enumerate(raw_reviews):
+        if not isinstance(rev, dict):
+            continue
+        rev_text = _clean_str(rev.get("text") or rev.get("reviewText") or rev.get("snippet"))
+        if rev_text and _review_mentions_product(rev_text, topic):
+            matching_reviews.append((idx, rev, rev_text))
+
+    review_hit = len(matching_reviews) > 0
+    if not (name_hit or review_hit):
+        # Place is irrelevant to topic: reject place and all its reviews completely
+        return results
+
     # 1. Place Summary Evidence (Metrics views must NOT be contaminated with review_count!)
     place_evidence = Evidence(
         id=f"maps:{place_id}",
@@ -172,59 +196,44 @@ def parse_maps_place_items(
     )
     results.append(place_evidence)
 
-    # 2. Extract specific reviews that mention the product
-    raw_reviews = place.get("reviews") or place.get("reviewsData") or []
-    if isinstance(raw_reviews, dict):
-        raw_reviews = [raw_reviews]
+    # 2. Extract matching reviews up to limit
+    for idx, rev, rev_text in matching_reviews:
+        if len(results) >= limit:
+            break
 
-    if isinstance(raw_reviews, list):
-        for idx, rev in enumerate(raw_reviews):
-            if len(results) >= limit:
-                break
-            if not isinstance(rev, dict):
-                continue
+        rev_id = _clean_str(rev.get("reviewId") or rev.get("review_id") or rev.get("id")) or f"{place_id}_rev_{idx}"
+        author_name = _clean_str(rev.get("name") or rev.get("authorName") or rev.get("reviewerName")) or "Pengulas Google"
+        author_uri = _clean_str(rev.get("reviewerUrl") or rev.get("authorUrl"))
+        stars = _clean_int(rev.get("stars") or rev.get("rating"))
+        published_raw = rev.get("publishedAtDate") or rev.get("publishedDate") or rev.get("publishAt") or rev.get("date")
 
-            rev_text = _clean_str(rev.get("text") or rev.get("reviewText") or rev.get("snippet"))
-            if not rev_text:
-                continue
+        # Preserve review URL if available, fallback to place URL
+        rev_url = _clean_str(rev.get("reviewUrl") or rev.get("url")) or place_url
 
-            # Only include reviews that mention the product
-            if not _review_mentions_product(rev_text, topic):
-                continue
-
-            rev_id = _clean_str(rev.get("reviewId") or rev.get("review_id") or rev.get("id")) or f"{place_id}_rev_{idx}"
-            author_name = _clean_str(rev.get("name") or rev.get("authorName") or rev.get("reviewerName")) or "Pengulas Google"
-            author_uri = _clean_str(rev.get("reviewerUrl") or rev.get("authorUrl"))
-            stars = _clean_int(rev.get("stars") or rev.get("rating"))
-            published_raw = rev.get("publishedAtDate") or rev.get("publishedDate") or rev.get("publishAt") or rev.get("date")
-
-            # Preserve review URL if available, fallback to place URL
-            rev_url = _clean_str(rev.get("reviewUrl") or rev.get("url")) or place_url
-
-            rev_evidence = Evidence(
-                id=f"maps:{rev_id}",
-                source="maps",
-                topic_id=topic.id,
-                external_id=rev_id,
-                title=f"{place_name} — Ulasan oleh {author_name}",
-                text=rev_text,
-                url=rev_url,
-                published_at=_parse_datetime(published_raw),
-                collected_at=datetime.now(timezone.utc),
-                metrics=None,
-                metadata={
-                    "type": "review",
-                    "place_id": place_id,
-                    "place_name": place_name,
-                    "review_id": rev_id,
-                    "author": author_name,
-                    "author_name": author_name,
-                    "author_uri": author_uri,
-                    "stars": stars,
-                    "rating": stars,
-                },
-            )
-            results.append(rev_evidence)
+        rev_evidence = Evidence(
+            id=f"maps:{rev_id}",
+            source="maps",
+            topic_id=topic.id,
+            external_id=rev_id,
+            title=f"{place_name} — Ulasan oleh {author_name}",
+            text=rev_text,
+            url=rev_url,
+            published_at=_parse_datetime(published_raw),
+            collected_at=datetime.now(timezone.utc),
+            metrics=None,
+            metadata={
+                "type": "review",
+                "place_id": place_id,
+                "place_name": place_name,
+                "review_id": rev_id,
+                "author": author_name,
+                "author_name": author_name,
+                "author_uri": author_uri,
+                "stars": stars,
+                "rating": stars,
+            },
+        )
+        results.append(rev_evidence)
 
     return results
 
@@ -246,7 +255,13 @@ def parse_maps_payload(
     return results
 
 
-def build_maps_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
+def build_maps_input(
+    topic: Topic,
+    limit: int | None = None,
+    *,
+    max_places: int = 3,
+    max_reviews: int = 10,
+) -> dict[str, Any]:
     """Build input dictionary for compass~crawler-google-places actor matching legacy semantics."""
     city = topic.cities[0] if topic.cities else "Indonesia"
     keyword = topic.keywords[0] if topic.keywords else topic.name
@@ -254,8 +269,8 @@ def build_maps_input(topic: Topic, limit: int = 50) -> dict[str, Any]:
     return {
         "searchStringsArray": queries,
         "locationQuery": city,
-        "maxCrawledPlacesPerSearch": min(limit, 20),
-        "maxReviews": 10,
+        "maxCrawledPlacesPerSearch": max_places,
+        "maxReviews": max_reviews,
         "reviewsSort": "newest",
         "reviewsOrigin": "google",
         "language": "id",
@@ -273,7 +288,9 @@ class MapsAdapter:
     def __init__(self, apify_client: Any | None = None) -> None:
         self.apify_client = apify_client
 
-    async def collect(self, topic: Topic, limit: int = 50) -> CollectionResult:
+    async def collect(
+        self, topic: Topic, limit: int = 50, *, max_places: int = 3
+    ) -> CollectionResult:
         if not self.apify_client:
             return CollectionResult(
                 source="maps",
@@ -283,7 +300,7 @@ class MapsAdapter:
                 message="Apify client belum dikonfigurasi.",
             )
 
-        actor_input = build_maps_input(topic, limit)
+        actor_input = build_maps_input(topic, max_places=max_places)
         try:
             run_result = await self.apify_client.run_actor(
                 ACTOR_ID, actor_input, timeout_seconds=120

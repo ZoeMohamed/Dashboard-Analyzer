@@ -36,8 +36,10 @@ def maps_fixture() -> list[dict]:
 def test_parse_maps_fixture(topic: Topic, maps_fixture: list[dict]) -> None:
     items = parse_maps_payload(maps_fixture, topic)
 
-    # 1 place evidence + 2 relevant reviews for place 1, and 1 place evidence for place 2 = 4
-    assert len(items) == 4
+    # 1 place evidence + 2 relevant reviews for place 1.
+    # Place 2 ('Toko Buku Berkah') has no relevance to seblak (neither name nor review hit) -> rejected!
+    assert len(items) == 3
+    assert not any(it.title == "Toko Buku Berkah" for it in items)
 
     place_item = items[0]
     assert place_item.id == "maps:ChIJN1t_tDeuEmsRUsoyG83frY4"
@@ -62,6 +64,21 @@ def test_parse_maps_fixture(topic: Topic, maps_fixture: list[dict]) -> None:
     assert not any("Toilet bersih" in (t or "") for t in rev_texts)
 
 
+def test_maps_irrelevant_place_is_rejected(topic: Topic) -> None:
+    """Section 16: Place with no name hit and no review hit must produce 0 items."""
+    irrelevant_place = {
+        "placeId": "place_padang",
+        "title": "Warung Nasi Padang",
+        "address": "Jl. Sudirman No. 10",
+        "reviews": [
+            {"reviewId": "rev_padang_1", "text": "Toilet bersih dan rapi"},
+            {"reviewId": "rev_padang_2", "text": "Pelayanan cepat dan ramah"},
+        ],
+    }
+    items = parse_maps_place_items(irrelevant_place, topic)
+    assert items == []
+
+
 def test_build_maps_input(topic: Topic) -> None:
     inp = build_maps_input(topic, limit=10)
     assert inp["language"] == "id"
@@ -71,6 +88,7 @@ def test_build_maps_input(topic: Topic) -> None:
     assert inp["scrapePlaceDetailPage"] is True
     assert inp["skipClosedPlaces"] is True
     assert inp["scrapeReviewsPersonalData"] is False
+    assert inp["maxCrawledPlacesPerSearch"] == 3
     assert "seblak Bandung" in inp["searchStringsArray"]
 
 

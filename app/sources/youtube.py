@@ -17,6 +17,15 @@ from .base import CollectionResult, Evidence, EvidenceMetrics, SourceAdapter, To
 
 logger = logging.getLogger(__name__)
 
+
+class YouTubeError(Exception):
+    """Exception raised by YouTube API or scraper mapping to standard SourceErrorCode."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
 API_ROOT = "https://www.googleapis.com/youtube/v3"
 WEB_ROOT = "https://www.youtube.com"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -313,14 +322,24 @@ def parse_youtube_item(item: dict[str, Any], topic: Topic) -> Evidence | None:
 
 
 def parse_youtube_payload(
-    items: list[dict[str, Any]], topic: Topic, limit: int = 50
+    items: list[dict[str, Any]],
+    topic: Topic,
+    limit: int = 50,
+    *,
+    lookback_days: int | None = None,
+    now: datetime | None = None,
 ) -> list[Evidence]:
     """Parse list of raw YouTube items and return bounded, sorted Evidence list."""
+    current = now or datetime.now(timezone.utc)
+    cutoff = current - timedelta(days=lookback_days) if lookback_days is not None else None
+
     seen_ids: set[str] = set()
     results: list[Evidence] = []
     for item in items:
         evidence = parse_youtube_item(item, topic)
         if evidence and evidence.id not in seen_ids:
+            if cutoff and evidence.published_at and evidence.published_at < cutoff:
+                continue
             seen_ids.add(evidence.id)
             results.append(evidence)
 
@@ -345,12 +364,54 @@ class YouTubeClient:
         self._client = client or httpx.AsyncClient(timeout=15.0)
         self._owns_client = client is None
 
+    async def _get_with_retry(self, url: str, params: dict[str, Any]) -> httpx.Response:
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                resp = await self._client.get(url, params=params)
+                if resp.status_code == 200:
+                    return resp
+                if resp.status_code == 401:
+                    raise YouTubeError("provider_permission", f"YouTube API key tidak valid (401): {resp.text}")
+                if resp.status_code == 403:
+                    try:
+                        err_body = resp.json()
+                        errors = err_body.get("error", {}).get("errors", [])
+                        reasons = [e.get("reason", "") for e in errors]
+                        message = err_body.get("error", {}).get("message", resp.text)
+                    except Exception:
+                        reasons = []
+                        message = resp.text
+                    if any(r in ("quotaExceeded", "dailyLimitExceeded", "userRateLimitExceeded") for r in reasons) or "quota" in message.lower():
+                        raise YouTubeError("budget_exhausted", f"YouTube quota habis (403): {message}")
+                    raise YouTubeError("provider_permission", f"YouTube permission ditolak (403): {message}")
+                if resp.status_code == 429:
+                    raise YouTubeError("budget_exhausted", f"YouTube rate limit exceeded (429): {resp.text}")
+                if 500 <= resp.status_code < 600:
+                    if attempt == 2:
+                        raise YouTubeError("provider_error", f"YouTube server error ({resp.status_code}): {resp.text}")
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+                    continue
+                raise YouTubeError("provider_error", f"YouTube API error ({resp.status_code}): {resp.text}")
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                if attempt == 2:
+                    raise YouTubeError("provider_timeout", f"YouTube request timed out: {exc}") from exc
+                await asyncio.sleep(0.5 * (2 ** attempt))
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if attempt == 2:
+                    raise YouTubeError("provider_error", f"YouTube network error: {exc}") from exc
+                await asyncio.sleep(0.5 * (2 ** attempt))
+        raise YouTubeError("provider_error", f"YouTube request failed: {last_exc}")
+
     async def search(
         self,
         topic: Topic,
         limit: int = 50,
         *,
-        lookback_days: int = 30,
+        lookback_days: int = 90,
+        date_pages: int = 2,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         current = now or datetime.now(timezone.utc)
@@ -360,7 +421,7 @@ class YouTubeClient:
         # 1. Search by date (with bounded pagination)
         ids: list[str] = []
         page_token: str | None = None
-        for _ in range(2):
+        for _ in range(date_pages):
             params: dict[str, Any] = {
                 "part": "snippet",
                 "q": query,
@@ -369,14 +430,13 @@ class YouTubeClient:
                 "publishedAfter": cutoff.isoformat().replace("+00:00", "Z"),
                 "regionCode": "ID",
                 "relevanceLanguage": "id",
+                "safeSearch": "moderate",
                 "maxResults": min(limit, 50),
                 "key": self.api_key,
             }
             if page_token:
                 params["pageToken"] = page_token
-            resp = await self._client.get(f"{API_ROOT}/search", params=params)
-            if resp.status_code != 200:
-                break
+            resp = await self._get_with_retry(f"{API_ROOT}/search", params=params)
             data = resp.json()
             ids.extend([
                 item["id"]["videoId"]
@@ -396,16 +456,16 @@ class YouTubeClient:
             "publishedAfter": cutoff.isoformat().replace("+00:00", "Z"),
             "regionCode": "ID",
             "relevanceLanguage": "id",
+            "safeSearch": "moderate",
             "maxResults": min(limit, 50),
             "key": self.api_key,
         }
-        pop_resp = await self._client.get(f"{API_ROOT}/search", params=pop_params)
-        if pop_resp.status_code == 200:
-            ids.extend([
-                item["id"]["videoId"]
-                for item in pop_resp.json().get("items", [])
-                if item.get("id", {}).get("videoId")
-            ])
+        pop_resp = await self._get_with_retry(f"{API_ROOT}/search", params=pop_params)
+        ids.extend([
+            item["id"]["videoId"]
+            for item in pop_resp.json().get("items", [])
+            if item.get("id", {}).get("videoId")
+        ])
 
         unique_ids = list(dict.fromkeys(ids))
         if not unique_ids:
@@ -415,7 +475,7 @@ class YouTubeClient:
         details: list[dict[str, Any]] = []
         for start in range(0, len(unique_ids), 50):
             batch = unique_ids[start:start + 50]
-            vid_resp = await self._client.get(
+            vid_resp = await self._get_with_retry(
                 f"{API_ROOT}/videos",
                 params={
                     "part": "snippet,statistics",
@@ -423,10 +483,19 @@ class YouTubeClient:
                     "key": self.api_key,
                 },
             )
-            if vid_resp.status_code == 200:
-                details.extend(vid_resp.json().get("items", []))
+            details.extend(vid_resp.json().get("items", []))
 
-        return details
+        # Local cutoff filter
+        filtered: list[dict[str, Any]] = []
+        for item in details:
+            pub_raw = item.get("snippet", {}).get("publishedAt")
+            if pub_raw:
+                pub_dt = relative_datetime(pub_raw, now=current)
+                if pub_dt < cutoff:
+                    continue
+            filtered.append(item)
+
+        return filtered
 
     async def close(self) -> None:
         if self._owns_client and self._client is not None:
@@ -443,6 +512,7 @@ class PublicYouTubeClient:
         self._owns_client = client is None
         self._cache: dict[str, dict[str, Any]] = {}
         self._refreshed_at: dict[str, datetime] = {}
+        self._semaphore = asyncio.Semaphore(4)
 
     @staticmethod
     def _initial_data(html: str, markers: tuple[str, ...]) -> dict[str, Any]:
@@ -455,19 +525,102 @@ class PublicYouTubeClient:
                     return parsed
         raise ValueError("Data awal YouTube tidak ditemukan")
 
+    async def _fetch_watch_page(
+        self, video_id: str, current: datetime, base_item: dict[str, Any]
+    ) -> dict[str, Any]:
+        last_refreshed = self._refreshed_at.get(video_id)
+        if (
+            last_refreshed
+            and (current - last_refreshed).total_seconds() < 30.0
+            and video_id in self._cache
+        ):
+            return self._cache[video_id]
+
+        async with self._semaphore:
+            url = f"{WEB_ROOT}/watch?v={video_id}"
+            headers = {"User-Agent": USER_AGENT, "Accept-Language": "id-ID,id;q=0.9"}
+            try:
+                resp = await self._client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    html = resp.text
+                    player_data = None
+                    for marker in (
+                        "var ytInitialPlayerResponse = ",
+                        "ytInitialPlayerResponse = ",
+                        "window['ytInitialPlayerResponse'] = ",
+                    ):
+                        idx = html.find(marker)
+                        if idx >= 0:
+                            try:
+                                decoder = json.JSONDecoder()
+                                player_data, _ = decoder.raw_decode(html[idx + len(marker):].lstrip())
+                                if isinstance(player_data, dict):
+                                    break
+                            except Exception:
+                                continue
+
+                    if player_data and isinstance(player_data, dict):
+                        v_details = player_data.get("videoDetails", {})
+                        micro = (
+                            player_data.get("microformat", {})
+                            .get("playerMicroformatRenderer", {})
+                        )
+                        pub_date = (
+                            micro.get("publishDate")
+                            or micro.get("uploadDate")
+                            or base_item["snippet"].get("publishedAt")
+                        )
+                        views = parse_count(
+                            v_details.get("viewCount")
+                            or base_item["statistics"].get("viewCount")
+                        )
+                        title = v_details.get("title") or base_item["snippet"].get("title")
+                        desc = (
+                            v_details.get("shortDescription")
+                            or micro.get("description", {}).get("simpleText")
+                            or base_item["snippet"].get("description")
+                        )
+                        author = v_details.get("author") or base_item["snippet"].get("channelTitle")
+                        channel_id = v_details.get("channelId")
+
+                        refreshed_item = {
+                            "id": video_id,
+                            "snippet": {
+                                "title": title,
+                                "channelTitle": author,
+                                "channelId": channel_id,
+                                "description": desc,
+                                "publishedAt": pub_date,
+                            },
+                            "statistics": {
+                                "viewCount": views,
+                            },
+                        }
+                        self._cache[video_id] = refreshed_item
+                        self._refreshed_at[video_id] = current
+                        return refreshed_item
+            except Exception as exc:
+                logger.debug("Failed to refresh watch page for %s: %s", video_id, exc)
+
+        self._cache[video_id] = base_item
+        self._refreshed_at[video_id] = current
+        return base_item
+
     async def search(
         self,
         topic: Topic,
         limit: int = 50,
         *,
-        lookback_days: int = 30,
+        lookback_days: int = 90,
+        refresh_watch_page: bool = True,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         current = now or datetime.now(timezone.utc)
+        cutoff = current - timedelta(days=lookback_days)
         query = build_query(topic)
         headers = {"User-Agent": USER_AGENT, "Accept-Language": "id-ID,id;q=0.9"}
 
-        items: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
 
         # Perform discovery pass by date (CAI%3D) and viewCount (CAMSAhAB)
@@ -511,18 +664,37 @@ class PublicYouTubeClient:
                             "viewCount": parsed_views,
                         },
                     }
-                    self._cache[video_id] = item_dict
-                    self._refreshed_at[video_id] = current
-                    items.append(item_dict)
-                    if len(items) >= limit:
+                    candidates.append(item_dict)
+                    if len(candidates) >= limit * 2:
                         break
             except Exception as exc:
                 logger.warning("Public YouTube scraper filter %s failed: %s", sort_filter, exc)
 
-            if len(items) >= limit:
+            if len(candidates) >= limit * 2:
                 break
 
-        return items
+        # Refresh watch page if enabled, bounded by semaphore
+        if refresh_watch_page and candidates:
+            refresh_tasks = [
+                self._fetch_watch_page(cand["id"], current, cand)
+                for cand in candidates[:limit]
+            ]
+            refreshed = await asyncio.gather(*refresh_tasks)
+        else:
+            refreshed = candidates[:limit]
+
+        # Apply final local cutoff
+        results: list[dict[str, Any]] = []
+        for item in refreshed:
+            pub_raw = item.get("snippet", {}).get("publishedAt")
+            pub_dt = relative_datetime(pub_raw, now=current)
+            if pub_dt < cutoff:
+                continue
+            results.append(item)
+            if len(results) >= limit:
+                break
+
+        return results
 
     @staticmethod
     def _walk(node: Any):
@@ -553,7 +725,9 @@ class YouTubeAdapter:
             else:
                 self.client = PublicYouTubeClient()
 
-    async def collect(self, topic: Topic, limit: int = 50) -> CollectionResult:
+    async def collect(
+        self, topic: Topic, limit: int = 50, *, lookback_days: int = 90
+    ) -> CollectionResult:
         if not self.client:
             return CollectionResult(
                 source="youtube",
@@ -564,12 +738,29 @@ class YouTubeAdapter:
             )
 
         try:
-            raw_items = await self.client.search(topic, limit=min(limit, 50))
-            evidence_items = parse_youtube_payload(raw_items, topic, limit)
+            try:
+                raw_items = await self.client.search(
+                    topic, limit=min(limit, 50), lookback_days=lookback_days
+                )
+            except TypeError:
+                raw_items = await self.client.search(topic, limit=min(limit, 50))
+
+            evidence_items = parse_youtube_payload(
+                raw_items, topic, limit, lookback_days=lookback_days
+            )
             return CollectionResult(
                 source="youtube",
                 raw_count=len(raw_items),
                 items=evidence_items,
+            )
+        except YouTubeError as exc:
+            logger.error("YouTube collection failed with YouTubeError: %s (code=%s)", exc.message, exc.code)
+            return CollectionResult(
+                source="youtube",
+                raw_count=0,
+                items=[],
+                error_code=exc.code,
+                message=exc.message,
             )
         except Exception as exc:
             logger.error("YouTube collection failed: %s", exc)

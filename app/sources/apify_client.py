@@ -20,6 +20,7 @@ TERMINAL_STATUSES = {
     "TIMING-OUT",
     "TIMED-OUT",
     "ABORTED",
+    "ABORTING",
 }
 
 
@@ -185,6 +186,7 @@ class ApifyClient:
             status_url = f"{APIFY_API_ROOT}/actor-runs/{run_id}"
             start_poll = datetime.now(timezone.utc).timestamp()
             run_status = start_data.get("status", "RUNNING")
+            consecutive_poll_errors = 0
 
             while run_status not in TERMINAL_STATUSES:
                 now_poll = datetime.now(timezone.utc).timestamp()
@@ -199,6 +201,7 @@ class ApifyClient:
                 try:
                     poll_resp = await client.get(status_url, headers=headers)
                     if poll_resp.status_code == 200:
+                        consecutive_poll_errors = 0
                         poll_data = poll_resp.json().get("data", {})
                         run_status = poll_data.get("status", "RUNNING")
                         if not dataset_id:
@@ -212,44 +215,88 @@ class ApifyClient:
                     elif poll_resp.status_code == 429:
                         self._mark_cooldown(token)
                         raise ApifyError("budget_exhausted", "Apify rate limit saat polling (HTTP 429).")
+                    elif poll_resp.status_code >= 500:
+                        consecutive_poll_errors += 1
+                        if consecutive_poll_errors >= 3:
+                            raise ApifyError(
+                                "provider_error",
+                                f"Apify server error saat polling (HTTP {poll_resp.status_code}).",
+                            )
+                        await asyncio.sleep(min(self.poll_interval * (2 ** consecutive_poll_errors), 5.0))
                 except ApifyError:
                     raise
-                except Exception:
-                    # Ignore transient polling network drops
-                    pass
+                except httpx.TimeoutException as exc:
+                    consecutive_poll_errors += 1
+                    if consecutive_poll_errors >= 3:
+                        raise ApifyError(
+                            "provider_timeout",
+                            f"Polling actor run {run_id} timeout berulang kali.",
+                        ) from exc
+                    await asyncio.sleep(min(self.poll_interval * (2 ** consecutive_poll_errors), 5.0))
+                except (httpx.TransportError, Exception) as exc:
+                    consecutive_poll_errors += 1
+                    if consecutive_poll_errors >= 3:
+                        raise ApifyError(
+                            "provider_error",
+                            f"Polling actor run {run_id} gagal setelah retry berulang: {exc}",
+                        ) from exc
+                    await asyncio.sleep(min(self.poll_interval * (2 ** consecutive_poll_errors), 5.0))
 
             if run_status != "SUCCEEDED":
                 raise ApifyError("provider_error", f"Actor run {run_id} selesai dengan status '{run_status}'.")
 
-            # 3. Fetch dataset items
+            # 3. Fetch dataset items with bounded retry
             if not dataset_id:
                 raise ApifyError("provider_error", f"Actor run {run_id} tidak memiliki defaultDatasetId.")
 
             dataset_url = f"{APIFY_API_ROOT}/datasets/{dataset_id}/items"
-            try:
-                items_resp = await client.get(
-                    dataset_url,
-                    headers=headers,
-                    params={"clean": "true", "format": "json", "limit": limit},
-                )
-            except httpx.TimeoutException:
-                raise ApifyError("provider_timeout", f"Timeout saat mengambil dataset {dataset_id}.")
-            except Exception as exc:
-                raise ApifyError("provider_error", f"Network error saat mengambil dataset {dataset_id}: {exc}")
+            items_resp = None
+            max_ds_attempts = 3
+            for ds_attempt in range(max_ds_attempts):
+                try:
+                    items_resp = await client.get(
+                        dataset_url,
+                        headers=headers,
+                        params={"clean": "true", "format": "json", "limit": limit},
+                    )
+                except httpx.TimeoutException as exc:
+                    if ds_attempt == max_ds_attempts - 1:
+                        raise ApifyError("provider_timeout", f"Timeout saat mengambil dataset {dataset_id}.") from exc
+                    await asyncio.sleep(2 ** ds_attempt)
+                    continue
+                except httpx.TransportError as exc:
+                    if ds_attempt == max_ds_attempts - 1:
+                        raise ApifyError("provider_error", f"Network error saat mengambil dataset {dataset_id}: {exc}") from exc
+                    await asyncio.sleep(2 ** ds_attempt)
+                    continue
 
-            if items_resp.status_code in (401, 403):
-                self._mark_quarantine(token)
-                raise ApifyError(
-                    "provider_permission",
-                    f"Izin token Apify ditolak saat mengambil dataset (HTTP {items_resp.status_code}).",
-                )
-            if items_resp.status_code == 429:
-                self._mark_cooldown(token)
-                raise ApifyError("budget_exhausted", "Apify rate limit saat mengambil dataset (HTTP 429).")
-            if items_resp.status_code >= 400:
+                if items_resp.status_code in (401, 403):
+                    self._mark_quarantine(token)
+                    raise ApifyError(
+                        "provider_permission",
+                        f"Izin token Apify ditolak saat mengambil dataset (HTTP {items_resp.status_code}).",
+                    )
+                if items_resp.status_code == 429:
+                    self._mark_cooldown(token)
+                    if ds_attempt == max_ds_attempts - 1:
+                        raise ApifyError("budget_exhausted", "Apify rate limit saat mengambil dataset (HTTP 429).")
+                    await asyncio.sleep(2 ** ds_attempt)
+                    continue
+                if items_resp.status_code >= 500:
+                    if ds_attempt == max_ds_attempts - 1:
+                        raise ApifyError(
+                            "provider_error",
+                            f"Gagal mengambil dataset {dataset_id}: HTTP {items_resp.status_code}",
+                        )
+                    await asyncio.sleep(2 ** ds_attempt)
+                    continue
+                break
+
+            if items_resp is None or items_resp.status_code >= 400:
+                code_str = str(items_resp.status_code) if items_resp else "Unknown"
                 raise ApifyError(
                     "provider_error",
-                    f"Gagal mengambil dataset {dataset_id}: HTTP {items_resp.status_code}",
+                    f"Gagal mengambil dataset {dataset_id}: HTTP {code_str}",
                 )
 
             try:
