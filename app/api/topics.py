@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.dependencies import get_repository
 from app.contracts import Topic, TopicCreate, TopicListResponse
@@ -29,9 +29,10 @@ async def create_topic(payload: TopicCreate, service: TopicService = Depends(get
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.delete("/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_topic(topic_id: str, repository: Repository = Depends(get_repository)) -> None:
+@router.delete("/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def delete_topic(topic_id: str, repository: Repository = Depends(get_repository)) -> Response:
     try:
         await repository.delete_topic(topic_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     except TopicNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
