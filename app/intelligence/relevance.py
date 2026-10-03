@@ -29,6 +29,25 @@ def mentions_product(text: str, topic: Topic) -> bool:
     return _contains(text, _signals(topic))
 
 
+def is_relevant_evidence(text: str, topic: Topic) -> bool:
+    """Deterministic product gate from docs/SYSTEM.md section 5.
+
+    Exclude terms always reject. A full keyword or the topic name accepts.
+    Otherwise enough distinct product terms must appear: two, or the only one
+    when the topic has a single term. A lone generic term such as "pedas" or
+    "level" is not enough to treat an unrelated post as product evidence.
+    """
+
+    if any(_contains(text, [normalize(term)]) for term in topic.exclude_terms if normalize(term)):
+        return False
+    phrases = [normalize(value) for value in [topic.name, *topic.keywords] if normalize(value)]
+    if _contains(text, phrases):
+        return True
+    terms = list(dict.fromkeys(normalize(value) for value in topic.product_terms if normalize(value)))
+    hits = sum(1 for term in terms if _contains(text, [term]))
+    return hits >= min(2, len(terms)) if terms else False
+
+
 def place_relevance(place: ParsedPlace, topic: Topic) -> tuple[bool, bool, list[bool]]:
     """Return (relevant, name_mentions_product, review_mentions)."""
 

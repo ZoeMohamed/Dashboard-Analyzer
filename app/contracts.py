@@ -65,6 +65,7 @@ class ErrorCode(StrEnum):
     DATABASE_TIMEOUT = "database_timeout"
     BUDGET_EXHAUSTED = "budget_exhausted"
     ALREADY_RUNNING = "already_running"
+    PROVIDER_ERROR = "provider_error"
 
 
 class StreamEventName(StrEnum):

@@ -29,6 +29,10 @@ class InvalidProviderPayloadError(DomainError):
     code = ErrorCode.INVALID_PAYLOAD
 
 
+class ProviderError(DomainError):
+    code = ErrorCode.PROVIDER_ERROR
+
+
 class DatabaseTimeoutError(DomainError):
     code = ErrorCode.DATABASE_TIMEOUT
 

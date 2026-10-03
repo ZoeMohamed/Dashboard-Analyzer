@@ -35,7 +35,7 @@ def _topic_slug(name: str) -> str:
     return "".join(char for char in value if char.isalnum() or char == "-")[:110] or "topic"
 
 
-def _id(topic_id: str, evidence: Evidence) -> str:
+def evidence_key(topic_id: str, evidence: Evidence) -> str:
     # The same public post may be relevant to more than one monitoring topic.
     # Namespacing by topic prevents a primary-key collision and cross-topic
     # overwrite while the unique constraint remains the deduplication key.
@@ -91,7 +91,7 @@ class InMemoryRepository:
         inserted = 0
         async with self._lock:
             for item in items:
-                key = _id(item.topic_id, item)
+                key = evidence_key(item.topic_id, item)
                 if key not in self.evidence:
                     inserted += 1
                 self.evidence[key] = item.model_copy(update={"id": key})
@@ -100,6 +100,9 @@ class InMemoryRepository:
     async def upsert_analysis(self, analysis: Analysis) -> None:
         async with self._lock:
             self.analyses[analysis.evidence_id] = analysis
+
+    async def missing_analysis_ids(self, evidence_ids: Iterable[str]) -> set[str]:
+        return {evidence_id for evidence_id in evidence_ids if evidence_id not in self.analyses}
 
     async def record_usage(self, usage: ProviderUsage) -> ProviderUsage:
         source = usage.source.value if isinstance(usage.source, SourceName) else (usage.source or "global")
@@ -253,7 +256,7 @@ class PostgresRepository:
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 for item in items:
-                    evidence_id = _id(item.topic_id, item)
+                    evidence_id = evidence_key(item.topic_id, item)
                     was_inserted = await connection.fetchval(
                         """insert into evidence
                           (id, topic_id, source, external_id, provider_run_id, title, text, author, url,
@@ -288,6 +291,13 @@ class PostgresRepository:
             analysis.evidence_id, analysis.label, analysis.score, analysis.confidence, analysis.aspects,
             analysis.analyzer, analysis.analyzed_at,
         )
+
+    async def missing_analysis_ids(self, evidence_ids: Iterable[str]) -> set[str]:
+        ids = list(dict.fromkeys(evidence_ids))
+        if not ids:
+            return set()
+        rows = await self.pool.fetch("select evidence_id from analyses where evidence_id = any($1::text[])", ids)
+        return set(ids) - {row["evidence_id"] for row in rows}
 
     async def record_usage(self, usage: ProviderUsage) -> ProviderUsage:
         source = usage.source.value if isinstance(usage.source, SourceName) else (usage.source or "global")

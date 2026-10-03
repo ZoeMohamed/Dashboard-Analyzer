@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 from app.config import Settings
@@ -22,9 +23,12 @@ from app.contracts import (
     StreamEventName,
     utc_now,
 )
+from app.database.repository import evidence_key
 from app.errors import BudgetExhaustedError, DomainError, NotConfiguredError, ProviderTimeoutError
 from app.services.events import EventBroker
 from app.services.usage import UsageService
+
+logger = logging.getLogger(__name__)
 
 
 class SourceProvider(Protocol):
@@ -39,12 +43,14 @@ def _provider_name(provider: object) -> str:
 
 
 class PipelineService:
-    def __init__(self, repository: object, settings: Settings, providers: dict[SourceName, SourceProvider] | None = None, broker: EventBroker | None = None, usage: UsageService | None = None) -> None:
+    def __init__(self, repository: object, settings: Settings, providers: dict[SourceName, SourceProvider] | None = None, broker: EventBroker | None = None, usage: UsageService | None = None, intelligence: Any | None = None) -> None:
         self.repository = repository
         self.settings = settings
         self.providers = providers or {}
         self.broker = broker or EventBroker()
         self.usage = usage or UsageService(repository, settings)
+        # Optional so platform tests can run without the intelligence layer.
+        self.intelligence = intelligence
         self._locks: dict[tuple[str, SourceName], asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[object]] = set()
 
@@ -57,11 +63,15 @@ class PipelineService:
     async def run_source(self, topic_id: str, source: SourceName, *, trigger: RunTrigger = RunTrigger.MANUAL) -> SourceRun:
         topic = await self.repository.get_topic(topic_id)
         lock = self._lock_for(topic_id, source)
-        run_id = f"run-{uuid4().hex}"
-        message = "Menunggu proses sumber sebelumnya selesai" if lock.locked() else None
-        run = await self.repository.upsert_run(SourceRun(id=run_id, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, trigger=trigger, message=message))
-        await self._emit(StreamEvent(event=StreamEventName.SOURCE_STATUS, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, run_id=run_id, message=message))
+        if lock.locked():
+            # The in-flight run already covers this (topic, source). Waiting and
+            # running again would pay the provider twice for the same data, and
+            # persisting a second run would leave a stale "queued" row behind.
+            return SourceRun(topic_id=topic_id, source=source, status=SourceStatus.RUNNING, trigger=trigger, error_code=ErrorCode.ALREADY_RUNNING, message="Sumber sedang diproses")
         async with lock:
+            run_id = f"run-{uuid4().hex}"
+            run = await self.repository.upsert_run(SourceRun(id=run_id, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, trigger=trigger))
+            await self._emit(StreamEvent(event=StreamEventName.SOURCE_STATUS, topic_id=topic_id, source=source, status=SourceStatus.QUEUED, run_id=run_id))
             provider = self.providers.get(source)
             if provider is None:
                 return await self._finish(run, SourceStatus.MISCONFIGURED, ErrorCode.NOT_CONFIGURED, "Sumber belum dikonfigurasi")
@@ -77,9 +87,15 @@ class PipelineService:
                     await self.usage.reserve(provider_name, source, 1)
                 result = await provider.collect(topic, limit=self.settings.source_result_limit)
                 if provider_name in {"apify", "gemini"} and result.usage_units > 1:
-                    await self.usage.reserve(provider_name, source, result.usage_units - 1)
-                items = [item.model_copy(update={"topic_id": topic_id, "provider_run_id": result.provider_run_id or run_id}) for item in result.items]
+                    # Already paid: record the real cost so the next reservation
+                    # is blocked, but keep the data instead of discarding it.
+                    await self.usage.record(provider_name, source, result.usage_units - 1)
+                collected = [item.model_copy(update={"topic_id": topic_id, "provider_run_id": result.provider_run_id or run_id}) for item in result.items]
+                relevant = self.intelligence.filter_relevant(topic, collected) if self.intelligence else collected
+                # Use the storage key as the evidence id so analyses join to it.
+                items = [item.model_copy(update={"id": evidence_key(topic_id, item)}) for item in relevant]
                 inserted = await self.repository.upsert_evidence(items)
+                await self._analyze(topic_id, source, run_id, items)
                 status = SourceStatus.FRESH if items else SourceStatus.EMPTY
                 final = await self._finish(run.model_copy(update={"provider_run_id": result.provider_run_id, "raw_count": result.raw_count, "relevant_count": len(items), "inserted_count": inserted}), status, None, "Sumber berhasil diproses" if items else "Tidak ada evidence relevan")
                 await self._emit(StreamEvent(event=StreamEventName.PROGRESS, topic_id=topic_id, source=source, status=status, run_id=run_id, progress=1, message=final.message))
@@ -94,6 +110,21 @@ class PipelineService:
                 return await self._finish(run, SourceStatus.ERROR, exc.code, str(exc))
             except Exception as exc:  # provider isolation: one source never cancels siblings
                 return await self._finish(run, SourceStatus.ERROR, ErrorCode.INVALID_PAYLOAD, f"Provider gagal: {str(exc)[:400]}")
+
+    async def _analyze(self, topic_id: str, source: SourceName, run_id: str, items: list[Evidence]) -> None:
+        """Analyze evidence that has no analysis yet; never fails the source run."""
+        if self.intelligence is None or not items:
+            return
+        try:
+            missing = await self.repository.missing_analysis_ids(item.id for item in items)
+            analyses = await self.intelligence.analyze([item for item in items if item.id in missing])
+            for analysis in analyses:
+                await self.repository.upsert_analysis(analysis)
+        except Exception:
+            logger.exception("Analisis %s gagal untuk %s; evidence tetap disimpan", source, topic_id)
+            return
+        if analyses:
+            await self._emit(StreamEvent(event=StreamEventName.ANALYSIS_UPDATED, topic_id=topic_id, source=source, run_id=run_id, message=f"{len(analyses)} evidence dianalisis"))
 
     async def _finish(self, run: SourceRun, status: SourceStatus, code: ErrorCode | None, message: str) -> SourceRun:
         final = await self.repository.upsert_run(run.model_copy(update={"status": status, "error_code": code, "message": message, "finished_at": utc_now()}))

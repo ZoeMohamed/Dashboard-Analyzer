@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     gemini_key_max_attempts: int = Field(default=2, ge=1, le=5)
     gemini_key_cooldown_seconds: int = Field(default=300, ge=10, le=86_400)
     gemini_monthly_analysis_limit: int = Field(default=300, ge=1, le=1_000_000)
+    gemini_model: str = "gemini-3.8-flash"
+    gemini_rpm: int = Field(default=8, ge=1, le=1_000)
+    gemini_batch_size: int = Field(default=25, ge=1, le=50)
+
+    # Empty means the YouTube adapter uses public search pages instead of the
+    # Data API v3; the key is only read on the server.
+    youtube_api_key: SecretStr | None = None
 
     refresh_token: SecretStr | None = None
 
@@ -93,6 +100,15 @@ class Settings(BaseSettings):
         if self.gemini_api_keys:
             return tuple(self.gemini_api_keys)
         return (self.gemini_api_key,) if self.gemini_api_key else ()
+
+    @property
+    def gemini_api_key_values(self) -> list[str]:
+        """Plain key values for the server-side Gemini client pool only.
+
+        Deliberately a plain property (not a computed field) so the values never
+        appear in serialized settings, health output, or logs.
+        """
+        return [key.get_secret_value() for key in self.gemini_credentials]
 
 
 @lru_cache(maxsize=1)

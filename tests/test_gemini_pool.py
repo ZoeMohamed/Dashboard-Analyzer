@@ -48,10 +48,12 @@ async def test_pool_does_not_hide_non_credential_errors() -> None:
         await pool.generate_content(model="fake", contents="test")
 
 
-def test_settings_merge_and_deduplicate_gemini_keys() -> None:
+def test_settings_deduplicate_pool_and_fall_back_to_single_key() -> None:
+    # docs/SYSTEM.md section 7: GEMINI_API_KEY is only used when the pool is empty.
     settings = Settings(
         _env_file=None,
         gemini_api_key="primary",
         gemini_api_keys="secondary, primary\nthird;secondary",
     )
-    assert settings.gemini_api_key_values == ["primary", "secondary", "third"]
+    assert settings.gemini_api_key_values == ["secondary", "primary", "third"]
+    assert Settings(_env_file=None, gemini_api_key="primary").gemini_api_key_values == ["primary"]
