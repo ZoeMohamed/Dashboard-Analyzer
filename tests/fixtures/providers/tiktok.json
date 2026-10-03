@@ -1,0 +1,28 @@
+[
+  {
+    "id": "7198273645123456789",
+    "text": "Cobain seblak prasmanan viral di Bandung, bumbunya pedas nampol banget!",
+    "webVideoUrl": "https://www.tiktok.com/@kulinerbandung/video/7198273645123456789",
+    "createTimeISO": "2026-09-28T12:00:00Z",
+    "authorMeta": {
+      "uniqueId": "kulinerbandung",
+      "nickName": "Kuliner Bandung Juara"
+    },
+    "playCount": 45000,
+    "diggCount": 3200,
+    "commentCount": 180,
+    "shareCount": 95
+  },
+  {
+    "id": "7198273645999999999",
+    "desc": "Resep seblak ceker pedas manis rumahan untuk jualan UMKM.",
+    "videoUrl": "https://www.tiktok.com/@dapurumkm/video/7198273645999999999",
+    "createTime": 1727500000,
+    "author": {
+      "name": "Dapur UMKM",
+      "uniqueId": "dapurumkm"
+    },
+    "play_count": 12000,
+    "likes": 850
+  }
+]

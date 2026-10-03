@@ -1,0 +1,22 @@
+[
+  {
+    "id": "fb_post_1001",
+    "text": "Rekomendasi warung seblak prasmanan di Bandung yang selalu antre panjang.",
+    "url": "https://www.facebook.com/groups/kulinerbandung/posts/1001",
+    "pageName": "Komunitas Kuliner Bandung",
+    "authorName": "Budi Santoso",
+    "time": "2026-09-28T09:00:00Z",
+    "likes": 210,
+    "comments": 45,
+    "shares": 18
+  },
+  {
+    "id": "fb_post_1002",
+    "text": "Buka usaha seblak rumahan dengan modal minim tapi untung manis.",
+    "url": "https://www.facebook.com/wirausahabandung/posts/1002",
+    "user": {
+      "name": "Wirausaha Muda"
+    },
+    "likes": 88
+  }
+]

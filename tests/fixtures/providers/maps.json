@@ -1,0 +1,42 @@
+[
+  {
+    "placeId": "ChIJN1t_tDeuEmsRUsoyG83frY4",
+    "title": "Seblak Prasmanan Juara",
+    "address": "Jl. Dipati Ukur No. 45, Bandung",
+    "totalScore": 4.8,
+    "reviewsCount": 350,
+    "url": "https://maps.google.com/?cid=1234567890",
+    "reviews": [
+      {
+        "reviewId": "rev_001",
+        "text": "Seblaknya enak banget, kuah kencurnya medok dan toppingnya melimpah!",
+        "stars": 5,
+        "publishedAtDate": "2026-09-27T14:00:00Z",
+        "name": "Rina Anggraeni"
+      },
+      {
+        "reviewId": "rev_002",
+        "text": "Tempat parkir agak sempit tapi rasa seblak prasmanan memuaskan.",
+        "stars": 4,
+        "publishedAtDate": "2026-09-25T11:00:00Z",
+        "name": "Deni Setiawan"
+      },
+      {
+        "reviewId": "rev_003",
+        "text": "Toilet bersih dan ada musholla.",
+        "stars": 4,
+        "publishedAtDate": "2026-09-20T10:00:00Z",
+        "name": "Anonim"
+      }
+    ]
+  },
+  {
+    "placeId": "ChIJN1t_tDeuEmsRUsoyG83frY5",
+    "title": "Toko Buku Berkah",
+    "address": "Jl. Merdeka No. 12, Bandung",
+    "totalScore": 4.2,
+    "reviewsCount": 40,
+    "url": "https://maps.google.com/?cid=9876543210",
+    "reviews": []
+  }
+]
