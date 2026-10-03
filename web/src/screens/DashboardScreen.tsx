@@ -69,7 +69,7 @@ export function DashboardScreen({
   );
 
   if (!snapshot) {
-    return <Page><div className="empty-state neo-box"><span className="material-symbols-outlined">database</span><h2>Snapshot belum tersedia</h2><p>Pilih produk yang dipantau atau tambahkan topik baru untuk mulai menggunakan dashboard.</p><button className="neo-btn primary-btn" onClick={onAddTopic}>＋ Tambah Pemantauan</button></div></Page>;
+    return <Page><div className="empty-state neo-box"><span className="material-symbols-outlined">database</span><h2>Snapshot belum tersedia</h2><p>Pilih produk yang dipantau atau tambahkan topik baru untuk mulai menggunakan dashboard.</p><button className="neo-btn primary-btn" onClick={onAddTopic}><span className="material-symbols-outlined" style={{ verticalAlign: "middle", marginRight: 6, fontSize: 18 }}>add_circle</span>Tambah Pemantauan</button></div></Page>;
   }
 
   return <Page>
